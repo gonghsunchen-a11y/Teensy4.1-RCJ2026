@@ -1,5 +1,90 @@
 #include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include <sub_core.h>
+#include <main_core.h>
+#include <math.h>
+#include <EEPROM.h>
+
+
+#define LS_count 32
+
+int readMux(int ch, int sigPin);
+void line_calibrate();
+void linesensor_update();
+void moveBackInBounds();
+
+
+
+
+
+uint16_t max_ls[LS_count];
+//uint16_t avg_ls[LS_count];
+uint16_t min_ls[LS_count];
+//SPEED
+float lineVx = 0;
+float lineVy = 0;
+
+float init_lineDegree = -1;
+float diff = 0;
+bool emergency = false;
+bool start = false;
+bool overhalf = false;
+bool first_detect = false;
+uint32_t speed_timer = 0;
+
+
+//量線
+void line_calibrate(){
+  for(int i=0; i<LS_count; i++){
+    max_ls[i] = 0;
+    min_ls[i] = 4095;
+  }
+  while(1){
+
+    if(Serial8.available()){
+      if(Serial8.read() == 'E'){
+        for(uint8_t i = 0; i < LS_count; i++){
+          Serial.print(" min ");Serial.print(i);Serial.print(" = ");Serial.print(min_ls[i]);
+          Serial.print(" max ");Serial.print(i);Serial.print(" = ");Serial.print(max_ls[i]);
+          Serial.print(" avg ");Serial.print(i);Serial.print(" = ");Serial.print(avg_ls[i]);
+          Serial.println("");
+        }
+        break;
+      } 
+    }
+
+    for(uint8_t i = 0; i < LS_count; i++){
+    uint16_t reading = readMux(i % 16, (i < 16) ? 1 : 2);
+
+    if(reading > max_ls[i]) max_ls[i] = reading;
+    if(reading < min_ls[i]) min_ls[i] = reading;
+    } 
+  }
+
+  for(uint8_t i = 0; i < LS_count; i++){
+      avg_ls[i] = (max_ls[i] + min_ls[i]) / 2;
+  }
+  EEPROM.put(0, avg_ls);
+  Serial8.print('D');
+}
+
+//更新
+void linesensor_update(){
+  line.state = 0xFFFFFFFF;
+  
+  for (uint8_t i = 0; i < LS_count; i++) {
+    uint16_t reading = readMux(i % 16, (i < 16) ? 1 : 2);;
+    
+    if (reading < avg_ls[i]) {
+      line.state &= ~(1UL << i); 
+      //Serial.printf("%d,%d",i,reading);
+      //Serial.print(" avg ");Serial.print(i);Serial.print(" = ");Serial.print(avg_ls[i]);
+      //Serial.println();
+    }
+  }
+}
 
 int sensorPin = A7;  
 int sensorValue = 0;
@@ -13,14 +98,15 @@ int vy = 0;
 static int forwardCounter = 0;
 static int backwardCounter = 0;
 
-void setup() {
+void setup(){
     sub_core_init();  
 
-    Serial.begin(9600);
+    Serial.begin(9600); 
     
 }
 
-void loop() {
+
+void loop(){
     update_gyro_sensor();
 
     int mainSensor = analogRead(sensorPin);
@@ -58,7 +144,7 @@ void loop() {
   
     if (muxSensor0 < 190) {
         forwardCounter = 0;
-        backwardCounter = 0;
+        backwardCounter = 0;  
         vx = 0;
         vy = 0;
     }
@@ -67,7 +153,7 @@ void loop() {
         backwardCounter++;
         int speed = -15 - backwardCounter / 30;
         if (speed < -25) speed = -25;
-        vx = 15;
+        vx = 0;
         vy = speed;  
     }  
     else if ((mainSensor < 255 || mainSensor > 268) && (middleSensor >= 35 && middleSensor <= 65)) {
@@ -76,14 +162,26 @@ void loop() {
         if (forwardCounter > 50) forwardCounter = 50;  
         int speed = 10 + forwardCounter / 50; 
         if (speed > 20) speed = 20;  
-        vx = 15;
+        vx = 0;
         vy = speed;
     } 
     else if (middleSensor < 65  && middleSensor > 35 || muxSensormid > 153 && muxSensormid < 160    ) {
         forwardCounter = 0; 
         backwardCounter = 0;
-        vx = 15;
+        vx = 0;
         vy = 0;
     }
     Vector_Motion(vx, vy, 0);
 }
+
+/*#include <main_core.h>
+
+void setup() {
+  main_core_init();
+}
+void loop() {
+  //ballsensor();
+  //Serial.printf("BallData - Valid: %d, Dist: %d, Angle: %d, Possession: %d, Vx: %.2f, Vy: %.2f\n", ballData.valid, ballData.dist, ballData.angle, ballData.possession, ballData.Vx, ballData.Vy);
+  Serial.println(ballData.dist);
+  //delay(1000);
+}*/
