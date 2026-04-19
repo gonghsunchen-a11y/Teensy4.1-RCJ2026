@@ -1,11 +1,33 @@
 #include "sub_core.h"
 
 // 1. Define the actual memory for these variables here
-LineData line; 
+LineData lineData; 
 GyroData gyroData;       
 RobotStatus robot;
 MainCoreCommand mainCommand;
-uint16_t avg_ls[32];
+uint16_t avg_ls[34];
+// --- Sensor Data ---
+BallData ballData;
+Position RobotPos;
+
+float init_lineDegree = -1;
+float diff = 0;
+bool emergency = false;
+bool start = false;
+bool overhalf = false;
+bool first_detect = false;
+uint32_t speed_timer = 0;
+float lineVx = 0;
+float lineVy = 0;
+
+float linesensorDegreelist[32] = {
+    0.00, 11.25, 22.50, 33.75, 45.00, 56.25, 67.50, 78.75, 
+    90.00, 101.25, 112.50, 123.75, 135.00, 146.25, 157.50, 168.75, 
+    180.00, 191.25, 202.50, 213.75, 225.00, 236.25, 247.50, 258.75, 
+    270.00, 281.25, 292.50, 303.75, 315.00, 326.25, 337.50, 348.75
+};
+
+
 
 void sub_core_init() {
     Serial8.begin(115200); // For communication with MainCore
@@ -23,20 +45,27 @@ void sub_core_init() {
     // Motor Initialization
     // Motor 1
     pinMode(pwmPin1, OUTPUT);
+    analogWriteFrequency(pwmPin1, 5000); // Set to 5 kHz
     pinMode(DIRA_1, OUTPUT);
     pinMode(DIRB_1, OUTPUT);
     // Motor 2
     pinMode(pwmPin2, OUTPUT);
+    analogWriteFrequency(pwmPin2, 5000); // Set to 5 kHz
     pinMode(DIRA_2, OUTPUT);
     pinMode(DIRB_2, OUTPUT);
     // Motor 3
     pinMode(pwmPin3, OUTPUT);
+    analogWriteFrequency(pwmPin3, 5000); // Set to 5 kHz
     pinMode(DIRA_3, OUTPUT);
     pinMode(DIRB_3, OUTPUT);
     // Motor 4
     pinMode(pwmPin4, OUTPUT);
+    analogWriteFrequency(pwmPin4, 5000); // Set to 5 kHz
     pinMode(DIRA_4, OUTPUT);
     pinMode(DIRB_4, OUTPUT);
+
+    //LED
+    pinMode(LED_BUILTIN, OUTPUT);
 
     EEPROM.begin();
     EEPROM.get(0, avg_ls);
@@ -54,15 +83,22 @@ int readMux(int ch, int sig) {
     if(sig == 2){
         return analogRead(M2);
     }
+    return 4095;
 }
 
 void update_line_sensor(){
-    for (int i = 0; i < 32; i++) {
-        int val = readMux(i % 16, (i < 16) ? M1 : M2);
-        if (val > avg_ls[i]) {
-            line.state |= (1UL << i);
-        }
+  lineData.state = 0xFFFFFFFF;
+  
+  for (uint8_t i = 0; i < LS_count; i++) {
+    uint16_t reading = readMux(i % 16, (i < 16) ? 1 : 2);;
+    
+    if (reading < avg_ls[i]) {
+      lineData.state &= ~(1UL << i); 
+      //Serial.printf("%d,%d",i,reading);
+      //Serial.print(" avg ");Serial.print(i);Serial.print(" = ");Serial.print(avg_ls[i]);
+      //Serial.println();
     }
+  }
 }
 
 void update_gyro_sensor(){
@@ -114,31 +150,7 @@ void update_gyro_sensor(){
   }
 }
 
-void calibrate() {
-    uint16_t max_ls[32], min_ls[32];
-    for (int i = 0; i < 32; i++) { 
-        max_ls[i] = 0; 
-        min_ls[i] = 4095; 
-    }
 
-    while (1) {
-        if(Serial8.available()){
-            uint8_t cmd = Serial8.read();
-            if(cmd == LS_CAL_END){ // End calibration command
-                break;
-            }
-        }
-        for (int i = 0; i < 32; i++) {
-            int r = readMux(i % 16, (i < 16) ? M1 : M2);
-            if (r > max_ls[i]) max_ls[i] = r; 
-            if (r < min_ls[i]) min_ls[i] = r;
-        }
-    }
-
-    for (int i = 0; i < 32; i++) avg_ls[i] = (max_ls[i] + min_ls[i]) / 2;
-    EEPROM.put(0, avg_ls);
-    Serial8.write(LS_CAL_ACK); // Send end calibration acknowledgment
-}
 
 /* --- Actuators Part --- */
 
@@ -175,8 +187,85 @@ void RobotIKControl(float vx, float vy, float omega) {
     SetMotorSpeed(4, p4);
 }
 
-void Vector_Motion(float Vx, float Vy, int rot_V) {  
+bool moveBackInBounds(){
+  //-----LINE SENSOR-----
+  float sumX = 0.0f, sumY = 0.0f;
+  int count = 0;
+  bool linedetected = false;
+  for(int i = 0; i < LS_count; i++){
+    if(bitRead(lineData.state, i) == 0){
+      if(i==8 || i==7 || i==9){continue;}
+      
+      //Serial.printf("read%d", i);
+      
+      float deg = linesensorDegreelist[i];
+      sumX += cos(deg * DtoR_const);
+      sumY += sin(deg * DtoR_const);
+      count++;
+      linedetected = true;
+    }
+  }
+
+  // B : 反彈
+
+  if(linedetected && count > 1){
+    float lineDegree = atan2(sumY, sumX) * RtoD_const;
+    if (lineDegree < 0){lineDegree += 360;} 
+    
+    //Serial.print("degree=");Serial.println(lineDegree);
+
+    if (!first_detect){
+      init_lineDegree = lineDegree;
+      first_detect = true;
+      speed_timer = millis();
+      
+      Serial.println("LINE DETECTED !!!");
+      Serial.print("initlineDegree =");Serial.println(init_lineDegree);
+    }
+
+    diff = fabs(lineDegree - init_lineDegree);
+    if(diff > 180){diff = 360 - diff;}
+    
+    //Serial.print("diff =");Serial.println(diff);
+
+
+    //-----BACK TO FIELD-----
+    float finalDegree;
+    if(diff > EMERGENCY_THRESHOLD){
+      overhalf = true;
+      finalDegree = fmod(init_lineDegree + 180.0f, 360.0f);
+    }
+    else{
+      overhalf = false;
+      finalDegree = fmod(lineDegree + 180.0f, 360.0f);
+    }
+    Serial.print("finalDegree =");Serial.println(finalDegree);
+        
+    lineVx = 40.0f *cos(finalDegree * DtoR_const);
+    lineVy = 40.0f *sin(finalDegree * DtoR_const);   
+  }
+  else{
+    first_detect = false;
+    lineVx = 0;
+    lineVy = 0;
+  }
+
+  Serial.print("lineVx =");Serial.println(lineVx);
+  Serial.print("lineVy =");Serial.println(lineVy);
+  
+
+}
+
+void Vector_Motion(float Vx, float Vy, float rot_V) {  
     robot.robot_heading += rot_V; // Update target heading based on input
+    if(robot.robot_heading > 135){
+      robot.robot_heading =  135;  
+    }
+    else if(robot.robot_heading < 45){
+      robot.robot_heading = 45;  
+    }
+    Serial.printf("robot.robot_heading%f\n",robot.robot_heading);
+    
     float e = robot.robot_heading - (90.0f - gyroData.heading);
 
     // Normalize error (-180 to 180)
@@ -208,23 +297,104 @@ void FC_Vector_Motion(float WVx, float WVy, float target_heading) {
     RobotIKControl(robot_vx, robot_vy, omega);
 }
 
-
-uint32_t readfrom_MainCore(){
-    if(Serial8.available()){
-        uint8_t datapacket[4] = {0};
-        for(int i = 0; i < 4; i++){
-            datapacket[i] = Serial8.read();
+void readMotor() {
+    // Process all available bytes to find a valid packet
+    while (Serial8.available() >= 6) {
+        if (Serial8.peek() != PROTOCAL_HEADER) {
+            Serial8.read(); 
+            continue;
         }
-        if(datapacket[0] == ACT_START){ // Actuation command
-            mainCommand.type = MainCoreCommand::ACTUATE;
-            mainCommand.vx = (int8_t)datapacket[1]; // Signed value
-            mainCommand.vy = (int8_t)datapacket[2]; // Signed value
-            mainCommand.deg = (float)datapacket[3]; // Degree input
-        } 
-        else if(datapacket[0] == LS_CAL_START){ // Start calibration
-            mainCommand.type = MainCoreCommand::CALIBRATE;
-        } 
+
+        uint8_t buf[6];
+        Serial8.readBytes(buf, 6);
+
+        if (buf[5] == PROTOCAL_END) {
+            // 1. Update motor values
+            mainCommand.vx = (float)((int8_t)buf[1]);
+            mainCommand.vy = (float)((int8_t)buf[2]);
+            mainCommand.rot_v = (float)((int8_t)buf[3]) / 100.0f;
+            mainCommand.heading = (uint16_t)((int8_t)buf[4]) * 10;
+            break; 
+        }
     }
-    // Placeholder for actual inter-core communication logic
-    return 0; // Return dummy data for now
+}
+
+void readMotorandSendSensors() {
+    // Process all available bytes to find a valid packet
+    while (Serial8.available() >= 6) {
+        if (Serial8.peek() != PROTOCAL_HEADER) {
+            Serial8.read(); 
+            continue;
+        }
+
+        uint8_t buf[6];
+        Serial8.readBytes(buf, 6);
+
+        if (buf[5] == PROTOCAL_END) {
+            // 1. Update motor values
+            mainCommand.vx = (float)((int8_t)buf[1]);
+            mainCommand.vy = (float)((int8_t)buf[2]);
+            mainCommand.rot_v = (float)((int8_t)buf[3]) / 100.0f;
+            mainCommand.heading = (uint16_t)((int8_t)buf[4]) * 10;
+
+            // 2. Prepare FRESH sensor data to send back immediately
+            uint8_t res[7];
+            res[0] = PROTOCAL_HEADER;
+            float temp = fmod((90 - gyroData.heading + 360), 360);
+            res[1] = (uint8_t)(temp / 10.0);
+            res[2] = (uint8_t)(lineData.state & 0xFF);
+            res[3] = (uint8_t)((lineData.state >> 8) & 0xFF);
+            res[4] = (uint8_t)((lineData.state >> 16) & 0xFF);
+            res[5] = (uint8_t)((lineData.state >> 24) & 0xFF);
+            res[6] = PROTOCAL_END;
+
+            // 3. Respond exactly once per received command
+            Serial8.write(res, 7);
+            break; 
+        }
+    }
+}
+
+void read_cam_and_pos_data() {
+
+    Serial8.write(GET_MAIN_DATA);
+
+    while (1) {
+
+        static uint32_t lastReq = 0;
+        if (millis() - lastReq > 10) {
+            Serial8.write(GET_MAIN_DATA);
+            lastReq = millis();
+        }
+
+        if (Serial8.available() < 10) continue;
+
+        while (Serial8.available() && Serial8.peek() != PROTOCAL_HEADER) {
+            Serial8.read();
+        }
+
+        if (Serial8.available() < 10) continue;
+
+        uint8_t buf[10];
+        Serial8.readBytes(buf, 10);
+
+        if (buf[0] != PROTOCAL_HEADER) continue;
+
+        uint8_t checksum = 0;
+        for (int i = 0; i < 8; i++) {
+            checksum += buf[i];
+        }
+
+        if (buf[9] == PROTOCAL_END && (checksum % 256) == buf[8]) {
+
+            ballData.valid = buf[1];
+            ballData.angle = ((uint16_t)buf[3] << 8) | buf[2];
+            ballData.dist  = ((uint16_t)buf[5] << 8) | buf[4];
+
+            RobotPos.x = (int8_t)buf[6];
+            RobotPos.y = (int8_t)buf[7];
+
+            break;
+        }
+    }
 }

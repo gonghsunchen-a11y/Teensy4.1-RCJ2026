@@ -6,6 +6,9 @@
 #include <math.h>
 #include <Dual_Core_Config.h>
 
+#define EMERGENCY_THRESHOLD 90
+#define DtoR_const 0.0174529f
+#define RtoD_const 57.2958f
 // --- Multiplexer Pins ---
 #define s0 A2
 #define s1 A3
@@ -16,33 +19,36 @@
 
 // Motor 4 Pins
 #define pwmPin1 2    // PWM 控制腳
-#define DIRA_1 4   // 方向控制腳1
-#define DIRB_1 3
+#define DIRA_1 3   // 方向控制腳1
+#define DIRB_1 4
 
 // Motor 3 Pins
 #define pwmPin2 10    // PWM 控制腳
-#define DIRA_2 12   // 方向控制腳1
-#define DIRB_2 11
+#define DIRA_2 11   // 方向控制腳1
+#define DIRB_2 12
 
 // Motor 2 Pins
 #define pwmPin3 5    // PWM 控制腳
-#define DIRA_3 9   // 方向控制腳1
-#define DIRB_3 6
+#define DIRA_3 6   // 方向控制腳1
+#define DIRB_3 9
 
 // Motor 1 Pins
 #define pwmPin4 23  // PWM 控制腳
-#define DIRA_4 37    // 方向控制腳1
-#define DIRB_4 36 
+#define DIRA_4 36   // 方向控制腳1
+#define DIRB_4 37  // 方向控制腳2
 
-
+#define LS_count 32
+#define Front_LS A7
+#define Mid_LS A6
+#define Back_LS readMux(8, 1) 
 
 // --- Data Structures ---
 
 struct MainCoreCommand {
     float vx = 0.0f;
     float vy = 0.0f;
-    float deg = 0.0f;
-    enum command_type {ACTUATE, CALIBRATE} type;
+    float rot_v = 0.0f;
+    uint16_t heading = 0; // Target heading in degrees
 };
 
 struct LineData {
@@ -56,10 +62,25 @@ struct GyroData {
     bool exist = false;
 };
 
+
+struct BallData {
+    uint16_t dist = 255; uint16_t angle = 255;
+    uint16_t possession = 255; bool valid = false;
+    float Vx; float Vy;
+};
+
+struct Position {
+    int x; // -90 to 90, where 0 is near the center line and 90 is near the goal line
+    int y; // -120 to 120
+};
+
+
 // Robot global configuration and tuning parameters
 struct RobotStatus {
     float robot_heading = 90.0f;      // Target heading
-    float P_factor = 0.7f;            // Proportional gain for rotation
+    //float P_factor = 0.7;         // Pololu Motor
+    float P_factor = 0.85f;           // Proportional gain for rotation
+
     float heading_threshold = 10.0f;  // Deadband (degrees)
     int8_t def_pos = 0;               // Default position state
     bool picked_up = false;           // Lift detection flag
@@ -68,27 +89,27 @@ struct RobotStatus {
 
 
 // --- Global Variable Declarations (Externs) ---
-extern LineData line;           
+extern LineData lineData;           
 extern MainCoreCommand mainCommand; // Added for MainCoreCommand usage  
 extern GyroData gyroData;       
 extern RobotStatus robot;        // Added to match Vector_Motion usage
-extern uint16_t avg_ls[32];     
+extern uint16_t avg_ls[34];
+extern BallData ballData;
+extern Position RobotPos;
 
 // --- Core Function Prototypes ---
 void sub_core_init();
 int  readMux(int ch, int sig);
 void update_line_sensor();
 void update_gyro_sensor();
-void calibrate();
-
+void line_calibrate();
+bool moveBackInBounds();
 // --- Actuators & IK Prototypes ---
 void SetMotorSpeed(uint8_t port, float speed);
 void RobotIKControl(float vx, float vy, float omega);
-void Vector_Motion(float Vx, float Vy, int rot_V);
+void Vector_Motion(float Vx, float Vy, float rot_V);
 void FC_Vector_Motion(float WVx, float WVy, float target_heading);
-
-// Dual Core Communication Prototypes
-void sendToCore2();
-uint32_t readfrom_MainCore();
-
+void readMotor();
+void readMotorandSendSensors();
+void read_cam_and_pos_data();
 #endif

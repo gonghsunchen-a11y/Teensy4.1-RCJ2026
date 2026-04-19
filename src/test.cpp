@@ -1,9 +1,9 @@
-#include <Arduino.h>
+/*#include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <sub_core.h>
-#include <main_core.h>
+//#include <main_core.h>
 #include <math.h>
 #include <EEPROM.h>
 
@@ -173,15 +173,19 @@ void loop(){
     }
     Vector_Motion(vx, vy, 0);
 }
+*/
 
-/*#include <main_core.h>
 
-void setup() {
-  main_core_init();
+
+#include <Arduino.h>
+#include <sub_core.h>
+
+void setup(){
+    sub_core_init();  
 }
-void loop() {
-  //ballsensor();
-  //Serial.printf("BallData - Valid: %d, Dist: %d, Angle: %d, Possession: %d, Vx: %.2f, Vy: %.2f\n", ballData.valid, ballData.dist, ballData.angle, ballData.possession, ballData.Vx, ballData.Vy);
-  Serial.println(ballData.dist);
-  //delay(1000);
-}*/
+
+void loop(){
+update_gyro_sensor();
+Vector_Motion(0, 40, 0);
+}
+

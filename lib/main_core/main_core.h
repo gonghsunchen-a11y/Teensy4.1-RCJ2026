@@ -13,57 +13,91 @@
 #define OLED_RESET -1
 
 // --- Button Pins ---
-#define BTN_UP    31
-#define BTN_DOWN  30
+#define BTN_UP 31
+#define BTN_DOWN 30
 #define BTN_ENTER 27
-#define BTN_ESC   26
+#define BTN_ESC 26
 
-// --- Ultrasonic Sensor Pins ---
+// --- Ultrasonic ---
 #define front_us A15
 #define left_us A14
 #define back_us A16
 #define right_us A17
-#define alpha 0.75
+#define alpha 0.75  
 
-extern struct USSensor{uint16_t dist_b = 0; uint16_t dist_l = 0; uint16_t dist_r = 0;uint16_t dist_f = 0; } usData;
+// --- Goal Localization Thresholds ---
+#define Y_LOCALIZE_THRESHOLD_L 20
+#define Y_LOCALIZE_THRESHOLD_H 70
+#define X_LOCALIZE_THRESHOLD_L 0   
+#define X_LOCALIZE_THRESHOLD_H 320
 
-// --- Kicker Constants ---
-#define Charge_Pin 33 // Update to your actual pins
-#define Kicker_Pin 32
+#define GOAL_LOCALIZATION_C1 3335.0
 
-// --- UI / Menu Globals (Externs) ---
-extern int _page;
-extern int _cursor;
-extern unsigned long _lastPress;
-extern unsigned long _lastUpdate;
 
-// --- OLED Instance (Extern) ---
-extern Adafruit_SSD1306 display;
-
-struct BallData {
-    uint16_t dist = 255;
-    uint16_t angle = 255;
-    uint16_t possession = 255;
-    bool valid = false;
-    float Vx;
-    float Vy;
+// --- 1. Blueprints (Struct Definitions) ---
+// We define these so every file knows the "shape" of the data.
+struct CamData {
+    uint16_t ball_x = 65535; uint16_t ball_y = 65535;
+    uint16_t ball_w = 65535; uint16_t ball_h = 65535;
+    bool ball_valid = false;
+    uint16_t goal_x = 65535; uint16_t goal_y = 65535;
+    uint16_t goal_w = 65535; uint16_t goal_h = 65535;
+    bool goal_valid = false;
 };
 
+struct BallData {
+    uint16_t dist = 255; uint16_t angle = 255;
+    uint16_t possession = 255; bool valid = false;
+    float Vx; float Vy;
+};
+
+struct USSensor {
+    uint16_t dist_b = 0; uint16_t dist_l = 0;
+    uint16_t dist_r = 0; uint16_t dist_f = 0;
+};
+
+struct RobotMovement {
+    float vx = 0.0f; float vy = 0.0f; float rot_v = 0.0f;
+    uint16_t heading = 0; // Target heading in degrees
+};
+
+
+struct SubCoreData {
+    uint32_t lineState = 0x0000; // 16 sensors, 1 bit each
+    int16_t gyroHeading = 0; // 0-359 degrees
+};
+
+struct Position {
+    int x; // -90 to 90, where 0 is near the center line and 90 is near the goal line
+    int y; // -120 to 120
+};
+
+
+
+// --- 3. External Variables ---
+// These tell the compiler "The actual memory for these is in main.cpp"
+extern CamData camData;
 extern BallData ballData;
+extern USSensor usData;
+extern SubCoreData subCoreData;
+extern RobotMovement robotMovement;
+extern Adafruit_SSD1306 display;
+extern Position RobotPos;
 
 // --- Function Prototypes ---
 void main_core_init();
 void drawMessage(const char* msg);
-void updateMenu();        // Logic for button presses
-void displayInterface();  // Logic for drawing the screen
-void readCameraData();
 void readBallCam();
-void kicker_control(bool kick);
-void localization();
+void readFrontCam();
 void readussensor();
-//void ballsensor();
-
-//#define alpha 0.75
-
-
+void localization();
+void kicker_control(bool kick);
+bool UI_Interface();
+void readGyroAndLineFromSubCore();
+void sendMotor(float vx, float vy, float rot_v, int heading);
+void sendMotorAndGetSensors(float vx, float vy, float rot_v, int heading);
+void localizeRobot();
+void update_all_sensor();
+void send_cam_and_pos_data();
+bool move_to_position(int pos_x, int pos_y);
 #endif

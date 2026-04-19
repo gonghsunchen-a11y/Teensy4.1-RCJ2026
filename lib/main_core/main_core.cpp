@@ -1,21 +1,22 @@
 #include "main_core.h"
 
-// --- MEMORY ALLOCATION (Fixes Linker Errors) ---
-int _page = 0;
-int _cursor = 0;
-unsigned long _lastPress = 0;
-unsigned long _lastUpdate = 0;
 
-// If these aren't defined in sub_core.cpp, they MUST be here:
-// RobotStatus robot; 
-// GyroData gyroData;
+// --- Sensor Data ---
+CamData camData;
+BallData ballData;
+USSensor usData;
+SubCoreData subCoreData;
+RobotMovement robotMovement;
+Position RobotPos;
 
 // --- OLED OBJECT ---
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-BallData ballData;
-
-
+enum RobotState { STATE_READY, STATE_CALIBRATING, STATE_SAVING };
+RobotState currentState = STATE_READY;
+// --- Kicker Constants ---
+#define Charge_Pin 24 // Update to your actual pins
+#define Kicker_Pin 25
 
 void main_core_init() {
     // Initialize all Hardware Serials
@@ -29,7 +30,12 @@ void main_core_init() {
     Serial8.begin(115200);
 
     Wire.begin();
-    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) while(1);
+    Wire.setClock(400000); // Fast I2C for OLED
+
+    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+        for(;;); // Lock if OLED fails
+    }
+
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     
@@ -38,18 +44,22 @@ void main_core_init() {
     pinMode(Charge_Pin, OUTPUT);
     pinMode(Kicker_Pin, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
-    /*/
+    
     // Ensure kicker starts safe
     digitalWrite(Charge_Pin, LOW);
-    digitalWrite(Kicker_Pin, LOW);*/
+    digitalWrite(Kicker_Pin, LOW);
+
+    // Button
     pinMode(BTN_UP, INPUT_PULLUP);
     pinMode(BTN_DOWN, INPUT_PULLUP);
     pinMode(BTN_ENTER, INPUT_PULLUP);
     pinMode(BTN_ESC, INPUT_PULLUP);
-    pinMode(A14, INPUT);
-    pinMode(A15, INPUT);
-    pinMode(A16, INPUT);
-    pinMode(A17, INPUT);
+
+    // Ultrasonic Sensor
+    pinMode(front_us, INPUT_DISABLE);
+    //pinMode(back_us, INPUT_DISABLE);
+    //pinMode(left_us, INPUT_DISABLE);
+    //pinMode(right_us, INPUT_DISABLE);
 }
 
 void drawMessage(const char* msg) {
@@ -100,53 +110,361 @@ void kicker_control(bool kick) {
     }
 }
 
-void read_OmniCam() {
-    // To be implemented: Serial parsing for OmniCam
+void readBallCam() {
+    static uint16_t buffer[6] = {0};
+    static uint16_t idx = 0;
+    while(Serial4.available()){
+        uint16_t b = Serial4.read();
+        if(idx == 0 && b != 0xCC){continue;} //wait for 0xCC
+        buffer[idx++] = b;
+
+        if(idx == 6){ //裝包 共6組
+            if(buffer[0] == 0xCC && buffer[5] == 0xEE){
+              ballData.angle = (uint16_t)buffer[1] | ((uint16_t)buffer[2] << 8);
+              ballData.dist  = (uint16_t)buffer[3] | ((uint16_t)buffer[4] << 8);
+            
+               if(ballData.angle != 65535 && ballData.dist != 65535)
+                ballData.valid = true;
+               else{
+                ballData.valid = false;
+               }  //無球
+            }
+            else{
+                ballData.valid = false;
+            }  //無數據
+            idx = 0;  // reset buffer
+        }
+    }
+}
+
+void readFrontCam() {
+    static uint8_t buffer[20];
+    static uint8_t index = 0;
+    while (Serial5.available()){
+        uint8_t b = Serial5.read();
+        if(index == 0 && b != 0xCC){
+            continue;  // 等待開頭 0xCC
+        }
+        buffer[index++] = b;
+        if (index == 18) {
+            // 3. 檢查頭尾是否正確
+            if (buffer[0] == 0xCC && buffer[17] == 0xEE) {
+            
+            // --- 解析球 (Ball) ---
+            // 把兩個 byte 拼回 16-bit 整數
+            int b_x = buffer[1] | (buffer[2] << 8);
+            int b_y = buffer[3] | (buffer[4] << 8);
+            int b_w = buffer[5] | (buffer[6] << 8);
+            int b_h = buffer[7] | (buffer[8] << 8);
+
+            // --- 解析球門 (Goal) ---
+            int g_x = buffer[9] | (buffer[10] << 8);
+            int g_y = buffer[11] | (buffer[12] << 8);
+            int g_w = buffer[13] | (buffer[14] << 8);
+            int g_h = buffer[15] | (buffer[16] << 8);
+
+            // 4. 將解析後的資料存入你的 rightData 結構
+            // 判斷是否有效：如果在 K210 端沒看到球會傳 65535 (0xFFFF)
+            camData.ball_x = b_x;
+            camData.ball_y = b_y;
+            camData.ball_w = b_w;
+            camData.ball_h = b_h;
+            camData.ball_valid = (b_x != 65535);
+
+            camData.goal_x = g_x;
+            camData.goal_y = g_y;
+            camData.goal_w = g_w;
+            camData.goal_h = g_h;
+            camData.goal_valid = (g_x != 65535);
+            }
+            index = 0;  // reset buffer
+        }
+    }
 }
 
 void readussensor() {
-    static float dist_b_f = 0.0f;
-    static float dist_l_f = 0.0f;
-    static float dist_r_f = 0.0f;
-    static float dist_f_f = 0.0f;
+    
+    // 2. Timing control: Sequential reading (The "Better Break")
+    static uint32_t lastReadTime = 0;
+    static int sensorStep = 0;
+    const int pingInterval = 50; // 35ms break between sensors
 
-    // read raw ADC and convert to cm (or mm depending on your scaling)
-    float dist_b_raw = analogRead(back_us) * 520.0f / 1024.0f;
-    float dist_l_raw = analogRead(left_us) * 520.0f / 1024.0f;
-    float dist_r_raw = analogRead(right_us) * 520.0f / 1024.0f;
-    float dist_f_raw = analogRead(front_us) * 520.0f / 1024.0f;
-    // complementary (low-pass) filtering
-    dist_b_f = alpha * dist_b_f + (1.0f - alpha) * dist_b_raw;
-    dist_l_f = alpha * dist_l_f + (1.0f - alpha) * dist_l_raw;
-    dist_r_f = alpha * dist_r_f + (1.0f - alpha) * dist_r_raw;
-    dist_f_f = alpha * dist_f_f + (1.0f - alpha) * dist_f_raw;
-    // assign filtered values to struct
-    usData.dist_b = dist_b_f;
-    usData.dist_l = dist_l_f;
-    usData.dist_r = dist_r_f;
-    usData.dist_f = dist_f_f;
+    // Static variables for low-pass filtering
+    static float dist_b_f, dist_l_f, dist_r_f, dist_f_f;
+
+    // Only process ONE sensor every 35ms to prevent acoustic interference
+    if (millis() - lastReadTime >= pingInterval) {
+        float rawValue = 0;
+        switch(sensorStep) {
+            case 0: // BACK
+                rawValue = analogRead(back_us) * 520.0f / 1024.0f;
+                dist_b_f = (alpha * rawValue) + ((1.0f - alpha) * dist_b_f);
+                usData.dist_b = (int)dist_b_f;
+                sensorStep = 1;
+                break;
+                
+            case 1: // LEFT
+                rawValue = analogRead(left_us) * 520.0f / 1024.0f;
+                dist_l_f = (alpha * rawValue) + ((1.0f - alpha) * dist_l_f);
+                usData.dist_l = (int)dist_l_f;
+                sensorStep = 2;
+                break;
+                
+            case 2: // RIGHT
+                rawValue = analogRead(right_us) * 520.0f / 1024.0f;
+                dist_r_f = (alpha * rawValue) + ((1.0f - alpha) * dist_r_f);
+                usData.dist_r = (int)dist_r_f;
+                sensorStep = 3;
+                break;
+                
+            case 3: // FRONT
+                rawValue = analogRead(front_us) * 520.0f / 1024.0f;
+                dist_f_f = (alpha * rawValue) + ((1.0f - alpha) * dist_f_f);
+                usData.dist_f = (int)dist_f_f;
+                sensorStep = 0; // Reset to start
+                break;
+        }
+        lastReadTime = millis();
+    }
 }
-/*void ballsensor(){
-  // 發送請求封包，通知感測器回傳資料
-  uint8_t b[4];
-  ballData.valid = false;
 
-  Serial6.write(0xBB);
-  while(!Serial6.available());
-  Serial6.readBytes(b,4);
-  if(b[1]==0xFF){
-      ballData.valid = false;
-      ballData.angle = 255;
-      ballData.dist = 255;
-  }
-  else if(b[0]==0xAA){
-    uint8_t temp =b[1];
-    ballData.valid = true;
-    ballData.angle = (temp & 0x0F);
-    ballData.dist = (temp & 0xF0)>>4;
-    ballData.possession = (uint8_t)((1-alpha) * b[2] + ballData.possession * alpha);
-  }
-  else{
-    ballData.valid = false;
-  }
-}*/
+void update_all_sensor(){
+    readBallCam();
+    readFrontCam();
+    readussensor();
+}
+
+void localizeRobot() {
+    // 1. Use Ultrasonic Sensors to get a rough estimate of the robot's position relative to the center line and the goal
+    RobotPos.x = usData.dist_l - usData.dist_r;
+
+    if(usData.dist_f < 50){ // If something is very close in front, we might be near the goal line
+        RobotPos.y = 120 - usData.dist_f; // Assuming the field is 100 units deep and the robot is facing forward
+    }
+    else if(usData.dist_b < 50){ // If something is very close in back, we might be near the center line
+        RobotPos.y = usData.dist_b - 120; // Assuming the robot starts at y=0 near the center line
+    }
+    else{
+        // 3. If the front camera sees the goal, use its perceived height to refine the distance estimate to the goal
+        if(camData.goal_valid){
+            int16_t goal_height = camData.goal_h;
+            if(goal_height > Y_LOCALIZE_THRESHOLD_L && goal_height < Y_LOCALIZE_THRESHOLD_H){
+                RobotPos.y = GOAL_LOCALIZATION_C1 / goal_height;
+            }
+            int16_t goal_x = camData.goal_x; 
+            if(goal_height > X_LOCALIZE_THRESHOLD_L && goal_height < X_LOCALIZE_THRESHOLD_H){
+                RobotPos.y = goal_x - 160; // Assuming 160 is the center x of the camera view
+            }
+        }
+    }
+}
+
+
+bool move_to_position(int pos_x, int pos_y){
+    while(1){
+        update_all_sensor();
+        localizeRobot();
+        Serial.printf("RobotPos: (%.2f, %.2f)\n", RobotPos.x, RobotPos.y);
+        int16_t dx = pos_x - RobotPos.x;
+        int16_t dy = pos_y - RobotPos.y;
+        if(abs(dx) < 10){
+            sendMotor(0, 0, 0, subCoreData.gyroHeading); // Stop the robot
+            break; // Target reached
+        }
+        robotMovement.vx = dx * 0.1 * 20;
+        robotMovement.vy = 0;
+        if(robotMovement.vx != 0){
+            if(robotMovement.vx > 30) robotMovement.vx = 30;
+            if(robotMovement.vx < 15 && robotMovement.vx > 0) robotMovement.vx = 15;
+            if(robotMovement.vx < -30) robotMovement.vx = -30;
+            if(robotMovement.vx > -15 && robotMovement.vx < 0) robotMovement.vx = -15;
+        }
+        if(robotMovement.vy != 0){
+            if(robotMovement.vy > 30) robotMovement.vy = 30;
+            if(robotMovement.vy < 15 && robotMovement.vy > 0) robotMovement.vy = 15;
+            if(robotMovement.vy < -30) robotMovement.vy = -30;
+            if(robotMovement.vy > -15 && robotMovement.vy < 0) robotMovement.vy = -15;
+        }
+        //robotMovement.vy = dy / unit_v * 20;
+        sendMotorAndGetSensors(robotMovement.vx, robotMovement.vy, 0, 90); // Move towards target, maintain current heading
+        Serial.printf("vx: %.2f, vy: %.2f\n", robotMovement.vx, robotMovement.vy);
+    }
+    return true;
+}
+
+bool turn_to(int heading){
+    ;
+    return true;    
+}
+
+bool move_in_second(int vx, int vy, int s){
+    ;
+    return true;
+}
+
+bool turn_in_second(int vx, int vy, int s){
+    ;
+    return true;
+}
+
+bool move_until(){
+    ;
+    return true;
+}
+
+bool turn_until(){
+    ;
+    return true;
+}
+
+
+void sendMotor(float vx, float vy, float rot_v, int target_heading) {
+    uint8_t data[6];
+    data[0] = PROTOCAL_HEADER;
+    data[1] = (int8_t)vx;
+    data[2] = (int8_t)vy;
+    // Scale up by 100 so we don't lose decimals (e.g., 0.5 rad/s becomes 50)
+    data[3] = (int8_t)(rot_v * 100.0f);
+    // Scale down by 10 to fit 0-360 into a single byte (0-36)
+    data[4] = (int8_t)(target_heading / 10);
+    data[5] = PROTOCAL_END;
+    Serial8.write(data, sizeof(data));
+}
+
+void sendMotorAndGetSensors(float vx, float vy, float rot_v, int target_heading) {
+    // 1. Send the command ONLY once.
+    // To avoid flooding, you should only call this function at a set interval (e.g. 20ms)
+    uint8_t data[6];
+    data[0] = PROTOCAL_HEADER;
+    data[1] = (int8_t)vx;
+    data[2] = (int8_t)vy;
+    data[3] = (int8_t)(rot_v * 100.0f);
+    data[4] = (int8_t)(target_heading / 10);
+    data[5] = PROTOCAL_END;
+    
+    Serial8.write(data, sizeof(data));
+
+    // 2. Try to read the response from the PREVIOUS command.
+    // If it's not here yet, we don't wait. We move on to keep the robot moving.
+    if(Serial8.available() >= 7) { 
+        if (Serial8.peek() == PROTOCAL_HEADER) {
+            uint8_t buf[7];
+            Serial8.readBytes(buf, 7);
+            if (buf[6] == PROTOCAL_END) {                
+                subCoreData.gyroHeading = buf[1] * 10;
+                subCoreData.lineState = ((uint32_t)buf[5] << 24) | ((uint32_t)buf[4] << 16) | 
+                                        ((uint32_t)buf[3] << 8) | buf[2];
+            }
+        } 
+        else {
+            Serial8.read(); // Clear one byte of junk if it's not the header
+        }
+    } 
+}
+
+
+
+void send_cam_and_pos_data() {
+    // Send ball cam data
+    uint8_t data[10];
+    data[0] = PROTOCAL_HEADER;
+    data[1] = (uint8_t)(ballData.valid);
+    data[2] = (uint8_t)(ballData.angle & 0xFF); //lower bit
+    data[3] = (uint8_t)((ballData.angle >> 8) & 0xFF); //higher bit
+    data[4] = (uint8_t)(ballData.dist & 0xFF); //lower bit
+    data[5] = (uint8_t)((ballData.dist >> 8) & 0xFF); //higher bit
+    data[6] = (int8_t)(RobotPos.x);
+    data[7] = (int8_t)(RobotPos.y);
+    uint8_t checksum = 0;
+    for(uint8_t i = 0; i < 8; i++){
+        checksum += data[i];
+    }
+    data[8] = checksum % 256; // checksum
+    data[9] = PROTOCAL_END;
+    // pos.x pos.y
+    // ball.valid ball.x ball.y
+    Serial8.write(data, sizeof(data));
+}
+
+
+void readMotorandSendSensors() {
+    // Process all available bytes to find a valid packet
+    while (Serial8.available() >= 6) {
+        if (Serial8.peek() != PROTOCAL_HEADER) {
+            Serial8.read(); 
+            continue;
+        }
+        uint8_t buf[6];
+        Serial8.readBytes(buf, 6);
+        if (buf[5] == PROTOCAL_END) {
+            break; 
+        }
+    }
+}
+
+bool UI_Interface(){
+    readussensor();
+    readBallCam();
+    readFrontCam();
+    static uint32_t lastDisplayTime = 0;
+    switch (currentState) {
+        case STATE_READY:
+            if (digitalRead(BTN_ENTER) == LOW) {
+                 Serial8.write(LS_CAL_START); // Command to Sensor Board
+                drawMessage("SCANNING");
+                delay(500);
+                currentState = STATE_CALIBRATING;
+                break;
+            }
+
+            if (millis() - lastDisplayTime > 100) { // 每 0.1 秒更新一次螢幕
+                display.clearDisplay();
+                display.setTextSize(1);
+                display.setTextColor(SSD1306_WHITE);
+                display.setCursor(0, 0);
+                display.printf("ball dist: %d\n", ballData.dist);
+                display.printf("ball angle: %d\n",ballData.angle);
+                display.printf("us f: %d\n", usData.dist_f);
+                display.printf("us l: %d\n", usData.dist_l);
+                display.printf("us r: %d\n", usData.dist_r);
+                display.printf("us b: %d\n", usData.dist_b);
+                display.display();
+                lastDisplayTime = millis();
+            }
+            if(digitalRead(BTN_UP) == LOW){
+                display.clearDisplay();
+                display.display();
+                return false;
+            }
+            //offense
+
+            //defense
+
+            break;
+
+
+        case STATE_CALIBRATING:
+            if (digitalRead(BTN_ESC) == LOW) {
+                Serial8.write(LS_CAL_END); // Command to Save
+                drawMessage("SAVING...");
+                delay(500);
+                currentState = STATE_SAVING;
+            }
+            break;
+        case STATE_SAVING:
+            if(Serial8.available()){
+                uint8_t c = Serial8.read();
+                if(c == LS_CAL_END){
+                    drawMessage("SAVED!");
+                    delay(1000); // 讓 SAVED 停一下
+                }
+                // 回到初始狀態
+                drawMessage("READY");
+                delay(1000);
+                display.clearDisplay();
+                currentState = STATE_READY;
+            }
+            break;
+    }
+    return true;
+}

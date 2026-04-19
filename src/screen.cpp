@@ -29,7 +29,7 @@ void setup(){
     //update_gyro_sensor();
     //readBallCam();
     static uint32_t lastDisplayTime = 0;
-    //readussensor();
+    readussensor();
     //ballsensor();
     
     if (millis() - lastDisplayTime > 100) { // 每秒更新一次顯示
@@ -41,11 +41,11 @@ void setup(){
         display.setCursor(0, 0);
         display.printf("ball dist: %d\n", ballData.dist);
         display.printf("ball angle: %d\n",ballData.angle);
-        display.printf("us f: %d\n", analogRead(front_us));
-        display.printf("us l: %d\n", analogRead(left_us));
-        display.printf("us r: %d\n", analogRead(right_us));
-        display.printf("us b: %d\n", analogRead(back_us));
-        display.printf("gyro: %d\n", analogRead("gyroData"));
+        display.printf("us f: %d\n", usData.dist_f);
+        display.printf("us l: %d\n", usData.dist_l);
+        display.printf("us r: %d\n", usData.dist_r);
+        display.printf("us b: %d\n", usData.dist_b);
+        //display.printf("gyro: %d\n", gyroData.angle);
         display.display();
         lastDisplayTime = millis();
         display.display();
