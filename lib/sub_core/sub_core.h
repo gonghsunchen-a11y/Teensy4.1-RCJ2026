@@ -34,8 +34,8 @@
 
 // Motor 1 Pins
 #define pwmPin4 23  // PWM 控制腳
-#define DIRA_4 36   // 方向控制腳1
-#define DIRB_4 37  // 方向控制腳2
+#define DIRA_4 37   // 方向控制腳1
+#define DIRB_4 36  // 方向控制腳2
 
 #define LS_count 32
 #define Front_LS A7

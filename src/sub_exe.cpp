@@ -22,34 +22,43 @@ void c_mode_main_function() {
       Serial.printf("Ball Valid: %d, Ball Angle: %d, Ball Distance: %d \n", ballData.valid, ballData.angle, ballData.dist);
       Serial.printf("Robot Pos: (%f, %f)\n", RobotPos.x, RobotPos.y);
               //White Line Handling Example
-        bool back_touch = analogRead(Back_LS) < avg_ls[34];
-        if(back_touch){
-          //後觸發，向後
-          forwardCounter = 0;
-          backwardCounter++;
-          int speed = -10 - backwardCounter / 30;
-          if (speed < -25) speed = -25;
-          mainCommand.vx = 0;
-          mainCommand.vy = speed;
-        }
+      bool back_touch = analogRead(Back_LS) < avg_ls[34];
+      static bool was_back_touch = false;
+      static bool was_front_touch = false;
+      if(back_touch){
+        was_back_touch = true;
+      }
+      if(was_back_touch == true){
+        //後觸發，向後
+        forwardCounter = 0;
+        backwardCounter++;
+        int speed = -10 - backwardCounter / 30;
+        if (speed < -25) speed = -25;
+        mainCommand.vx = 0;
+        mainCommand.vy = speed;
+      }
        
         bool front_touch = analogRead(Front_LS) < avg_ls[32];
         bool mid_touch = analogRead(Mid_LS) < avg_ls[33];
         Serial.printf("Front LS: %d, Mid LS: %d\n", front_touch, mid_touch);
-        if(front_touch){
-          //前觸發，向前
-          forwardCounter++;
-          backwardCounter = 0;
-          int speed = 25 + forwardCounter / 30;
-          if (speed > 45) speed = 45;
-          mainCommand.vy = speed;
-        }
-        if(mid_touch){
-          //停止
-          forwardCounter = 0;
-          backwardCounter = 0;
-          mainCommand.vy = 0;
-        }
+      if (front_touch) {
+        was_front_touch = true;
+      }
+      if(was_front_touch == true){
+        //前觸發，向前
+        forwardCounter++;
+        backwardCounter = 0;
+        int speed = 25 + forwardCounter / 30;
+        if (speed > 45) speed = 45;          mainCommand.vy = speed;
+      }
+      if(mid_touch){
+        //停止
+        was_back_touch = false;
+        was_front_touch = false;
+        forwardCounter = 0;
+        backwardCounter = 0;
+        mainCommand.vy = 0; 
+      }
         if(!((lineData.state >> 4) & 1) && !((lineData.state >> 12) & 1)){
             forwardCounter = 0;
             backwardCounter++;
@@ -91,56 +100,86 @@ void c_mode_main_function() {
             else if (ballData.angle < 80 || ballData.angle > 280) {
                 mainCommand.vx = MAX_VX;  // Want to go Right
             }
+        else { 
+                mainCommand.vx = MAX_VX*0;
         }
-
-        int s = lineData.state;
-        bool rightLine =
-            !((s >> 0) & 1)  ||
-            !((s >> 1) & 1)  ||
-            !((s >> 2) & 1)  ||
-            !((s >> 3) & 1)  ||
-            !((s >> 31) & 1) ||
-            !((s >> 30) & 1) ||
-            !((s >> 29) & 1) ||
-            !((s >> 28) & 1) ||
-            !((s >> 27) & 1) ||
-            !((s >> 26) & 1);
-
-        bool leftLine =
-            !((s >> 16) & 1) ||
-            !((s >> 13) & 1) ||
-            !((s >> 14) & 1) ||
-            !((s >> 15) & 1) ||
-            !((s >> 17) & 1) ||
-            !((s >> 18) & 1) ||
-            !((s >> 19) & 1) ||
-            !((s >> 20) & 1) ||
-            !((s >> 21) & 1) ||
-            !((s >> 22) & 1);
-
-
-        // ===== 右邊界 =====
-        if (rightLine) {
-            if (mainCommand.vx > 0) {
-                mainCommand.vx = 0;     // 禁止再往右
-            }
-            else if (mainCommand.vx == 0) {
-                mainCommand.vx = -8;    // 自己往左退
-            }
         }
 
 
-        // ===== 左邊界 =====
-        if (leftLine) {
-            if (mainCommand.vx < 0) {
-                mainCommand.vx = 0;     // 禁止再往左
-            }
-            else if (mainCommand.vx == 0) {
-                mainCommand.vx = 8;     // 自己往右退
-            }
-        }
+        static bool right_locked = false;
+        static bool left_locked  = false;
+        static int side_lock = 0;
 
-        Vector_Motion(mainCommand.vx, mainCommand.vy, mainCommand.rot_v);
+        // ===== 右邊 =====
+        bool right_outer = !((lineData.state >> 0) & 1);
+        bool right_inner = !((lineData.state >> 28) & 1);
+
+        // ===== 左邊 =====
+        bool left_outer  = !((lineData.state >> 16) & 1);
+        bool left_inner  = !((lineData.state >> 20) & 1);
+
+
+        // =====================
+        // 右邊邏輯
+        // =====================
+
+        // 還在線內但靠線
+        if (side_lock == 0) {
+    if (right_inner) {
+        side_lock = 1;
+    }
+    else if (left_inner) {
+        side_lock = 2;
+    }
+}
+
+
+
+      if (side_lock == 1) {
+
+          if (right_inner) {
+              right_locked = true;
+
+              if (mainCommand.vy < 0) {
+                  mainCommand.vy = 0;
+              }
+          }
+
+          if (right_locked) {
+              mainCommand.vx = -15;
+          }
+
+          if (right_outer) {
+              mainCommand.vx = 0;
+              right_locked = false;
+              side_lock = 0;
+          }
+      }
+
+
+      if (side_lock == 2) {
+
+          if (left_inner) {
+              left_locked = true;
+
+              if (mainCommand.vy < 0) {
+                  mainCommand.vy = 0;
+              }
+          }
+
+          if (left_locked) {
+              mainCommand.vx = 15;
+          }
+
+          if (left_outer) {
+              mainCommand.vx = 0;
+              left_locked = false;
+              side_lock = 0;
+          }
+      }
+
+        Vector_Motion(mainCommand.vx, 0, mainCommand.rot_v);
+        Serial.printf("vx:%f, vy:%f, rot_v:%f\n", mainCommand.vx, mainCommand.vy, mainCommand.rot_v);
     }
 
     /*
