@@ -119,19 +119,15 @@ void c_mode_main_function() {
         bool left_inner  = !((lineData.state >> 20) & 1);
 
 
-        // =====================
-        // 右邊邏輯
-        // =====================
 
-        // 還在線內但靠線
         if (side_lock == 0) {
-    if (right_inner) {
-        side_lock = 1;
+        if (right_inner) {
+            side_lock = 1;
+        }
+        else if (left_inner) {
+            side_lock = 2;
+        }
     }
-    else if (left_inner) {
-        side_lock = 2;
-    }
-}
 
 
 
