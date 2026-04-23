@@ -1,15 +1,97 @@
 #include <sub_core.h>
 uint8_t op_mode;
 
-static int forwardCounter = 0;
-static int backwardCounter = 0;
-const int MAX_VX = 30;
+float lineVx = 0;
+float lineVy = 0;
 
-void update_all_sensor(){
-    update_line_sensor();
-    update_gyro_sensor();
+// --- MATH CONSTANTS & CONTROL PARAMETERS ---
+#define DtoR_const 0.0174529f
+#define RtoD_const 57.2958f
+
+float ballDegreelist[16]={22.5,45,67.5,87.5,92.5,112.5,135,157.5,202.5,225,247.5,265,275,292.5,315,337.5};
+float linesensorDegreelist[32] = {
+    0.00, 11.25, 22.50, 33.75, 45.00, 56.25, 67.50, 78.75, 
+    90.00, 101.25, 112.50, 123.75, 135.00, 146.25, 157.50, 168.75, 
+    180.00, 191.25, 202.50, 213.75, 225.00, 236.25, 247.50, 258.75, 
+    270.00, 281.25, 292.50, 303.75, 315.00, 326.25, 337.50, 348.75
+};
+
+//Line Sensor
+#define EMERGENCY_THRESHOLD 90
+
+bool moveBackInBounds(){
+  //-----LINE SENSOR-----
+  float sumX = 0.0f, sumY = 0.0f;
+  int count = 0;
+  bool linedetected = false;
+  static float init_lineDegree = -1;
+  static float diff = 0;
+  static bool emergency = false;
+  static bool start = false;
+  static bool overhalf = false;
+  static bool first_detect = false;
+  static uint32_t speed_timer = 0;
+
+  for(int i = 0; i < LS_count; i++){
+    if(i==5 ||i==6 ||i==7 ||i==8 ||i==9 ||i==10 ||i==11){continue;}
+      
+    if(bitRead(lineData.state, i) == 0){
+      
+      //Serial.printf("read%d", i);
+      
+      float deg = linesensorDegreelist[i];
+      sumX += cos(deg * DtoR_const);
+      sumY += sin(deg * DtoR_const);
+      count++;
+      linedetected = true;
+    }
+  }
+
+  // B : 反彈
+
+  if(linedetected && count >= 1){
+    float lineDegree = atan2(sumY, sumX) * RtoD_const;
+    if (lineDegree < 0){lineDegree += 360;} 
+    
+    //Serial.print("degree=");Serial.println(lineDegree);
+
+    if (!first_detect){
+      init_lineDegree = lineDegree;
+      first_detect = true;
+      speed_timer = millis();
+      
+      Serial.println("LINE DETECTED !!!");
+      Serial.print("initlineDegree =");Serial.println(init_lineDegree);
+    }
+
+    diff = fabs(lineDegree - init_lineDegree);
+    if(diff > 180){diff = 360 - diff;}
+    
+    //Serial.print("diff =");Serial.println(diff);
+
+
+    //-----BACK TO FIELD-----
+    float finalDegree;
+    if(diff > EMERGENCY_THRESHOLD){
+      overhalf = true;
+      finalDegree = fmod(init_lineDegree + 180.0f, 360.0f);
+    }
+    else{
+      overhalf = false;
+      finalDegree = fmod(lineDegree + 180.0f, 360.0f);
+    }
+    Serial.print("finalDegree =");Serial.println(finalDegree);
+    lineVx = 40.0 *cos(finalDegree * DtoR_const);
+    lineVy = 40.0 *sin(finalDegree * DtoR_const);   
+    return true;
+  }
+  else{
+    first_detect = false;
+    lineVx = 0;
+    lineVy = 0;
+    return false;
+  }
 }
-
 
 void c_mode_main_function() {
     Serial.println("Cmode Started");
@@ -17,294 +99,120 @@ void c_mode_main_function() {
       read_cam_and_pos_data();
       update_line_sensor(); // Keep updating sensors!
       update_gyro_sensor();
-      Serial.printf("Front LS: %d, Mid LS: %d\n", (lineData.state >> 32) & 1, (lineData.state >> 33) & 1);
       Serial.printf("Gyro Heading: %f\n", gyroData.heading);
       Serial.printf("Ball Valid: %d, Ball Angle: %d, Ball Distance: %d \n", ballData.valid, ballData.angle, ballData.dist);
-      Serial.printf("Robot Pos: (%f, %f)\n", RobotPos.x, RobotPos.y);
-              //White Line Handling Example
-      bool back_touch = analogRead(Back_LS) < avg_ls[34];
-      static bool was_back_touch = false;
-      static bool was_front_touch = false;
-      if(back_touch){
-        was_back_touch = true;
-      }
-      if(was_back_touch == true){
-        //後觸發，向後
-        forwardCounter = 0;
-        backwardCounter++;
-        int speed = -10 - backwardCounter / 30;
-        if (speed < -25) speed = -25;
-        mainCommand.vx = 0;
-        mainCommand.vy = speed;
-      }
+      Serial.printf("Robot Pos: (%d, %d)\n", RobotPos.x, RobotPos.y);
        
-        bool front_touch = analogRead(Front_LS) < avg_ls[32];
-        bool mid_touch = analogRead(Mid_LS) < avg_ls[33];
-        Serial.printf("Front LS: %d, Mid LS: %d\n", front_touch, mid_touch);
-      if (front_touch) {
-        was_front_touch = true;
-      }
-      if(was_front_touch == true){
-        //前觸發，向前
-        forwardCounter++;
-        backwardCounter = 0;
-        int speed = 25 + forwardCounter / 30;
-        if (speed > 45) speed = 45;          mainCommand.vy = speed;
-      }
-      if(mid_touch){
-        //停止
-        was_back_touch = false;
-        was_front_touch = false;
-        forwardCounter = 0;
-        backwardCounter = 0;
-        mainCommand.vy = 0; 
-      }
-        if(!((lineData.state >> 4) & 1) && !((lineData.state >> 12) & 1)){
-            forwardCounter = 0;
-            backwardCounter++;
-            int speed = -25 - backwardCounter / 30;
-            if (speed < -35) speed = -35;
-            mainCommand.vy = speed;
+      //use Ultrasonic Sensor for localization
+      if(moveBackInBounds()){
+        Serial.printf("MOVING BACK IN BOUNDS %f %f", lineVx, lineVy);
+        if (RobotPos.y<-100){
+          FC_Vector_Motion(lineVx, lineVy + 20, 90);
         }
-
-        if(!((lineData.state >> 5) & 1) && !((lineData.state >> 11) & 1)){
-            forwardCounter = 0;
-            backwardCounter++;
-            int speed = -20 - backwardCounter / 30;
-            if (speed < -30) speed = -30;
-            mainCommand.vy = speed;
-        } 
-        if(!((lineData.state >> 6) & 1) && !((lineData.state >> 10) & 1)){
-            forwardCounter = 0;
-            backwardCounter++;
-            int speed = -15 - backwardCounter / 30;
-            if (speed < -25) speed = -25;
-            mainCommand.vy = speed;
-        }
-        if(!((lineData.state >> 7) & 1 )&& !((lineData.state >> 9) & 1)){
-            forwardCounter = 0;
-            backwardCounter++;
-            int speed = -10 - backwardCounter / 30;
-            if (speed < -20) speed = -20;
-            mainCommand.vy = speed;
-        }
-
-        if(!((lineData.state >> 8) & 1 )){
-            mainCommand.vy = 0;
-        }
-
-        if (ballData.valid) {
-            if (ballData.angle > 100 && ballData.angle < 260) {
-                mainCommand.vx = -MAX_VX; // Want to go Left
-            } 
-            else if (ballData.angle < 80 || ballData.angle > 280) {
-                mainCommand.vx = MAX_VX;  // Want to go Right
-            }
-        else { 
-                mainCommand.vx = MAX_VX*0;
-        }
-        }
-
-
-        static bool right_locked = false;
-        static bool left_locked  = false;
-        static int side_lock = 0;
-
-        // ===== 右邊 =====
-        bool right_outer = !((lineData.state >> 0) & 1);
-        bool right_inner = !((lineData.state >> 28) & 1);
-
-        // ===== 左邊 =====
-        bool left_outer  = !((lineData.state >> 16) & 1);
-        bool left_inner  = !((lineData.state >> 20) & 1);
-
-
-
-        if (side_lock == 0) {
-        if (right_inner) {
-            side_lock = 1;
-        }
-        else if (left_inner) {
-            side_lock = 2;
-        }
-    }
-
-
-
-      if (side_lock == 1) {
-
-          if (right_inner) {
-              right_locked = true;
-
-              if (mainCommand.vy < 0) {
-                  mainCommand.vy = 0;
-              }
-          }
-
-          if (right_locked) {
-              mainCommand.vx = -15;
-          }
-
-          if (right_outer) {
-              mainCommand.vx = 0;
-              right_locked = false;
-              side_lock = 0;
-          }
-      }
-
-
-      if (side_lock == 2) {
-
-          if (left_inner) {
-              left_locked = true;
-
-              if (mainCommand.vy < 0) {
-                  mainCommand.vy = 0;
-              }
-          }
-
-          if (left_locked) {
-              mainCommand.vx = 15;
-          }
-
-          if (left_outer) {
-              mainCommand.vx = 0;
-              left_locked = false;
-              side_lock = 0;
-          }
-      }
-
-        Vector_Motion(mainCommand.vx, 0, mainCommand.rot_v);
-        Serial.printf("vx:%f, vy:%f, rot_v:%f\n", mainCommand.vx, mainCommand.vy, mainCommand.rot_v);
-    }
-
-    /*
-
-    while(1) {
-      read_cam_and_pos_data();
-      update_line_sensor(); // Keep updating sensors!
-      update_gyro_sensor();
-        // Add logic here
-        readMotor();
-        moveBackInBounds();
-        //White Line Handling Example
-       /* bool back_touch = analogRead(Back_LS) < avg_ls[34];
-        if(back_touch){
-          //後觸發，向後
-          forwardCounter = 0;
-          backwardCounter++;
-          int speed = -10 - backwardCounter / 30;
-          if (speed < -25) speed = -25;
-          mainCommand.vx = 0;
-          mainCommand.vy = speed;
-        }*/
-       /*
-        bool front_touch = analogRead(Front_LS) < avg_ls[32];
-        bool mid_touch = analogRead(Mid_LS) < avg_ls[33];
-        Serial.printf("Front LS: %d, Mid LS: %d\n", front_touch, mid_touch);
-        if(front_touch){
-          //前觸發，向前
-          forwardCounter++;
-          backwardCounter = 0;
-          int speed = 25 + forwardCounter / 30;
-          if (speed > 45) speed = 45;
-          mainCommand.vy = speed;
-        }
-        if(mid_touch){
-          //停止
-          forwardCounter = 0;
-          backwardCounter = 0;
-          mainCommand.vy = 0;
-        }
-        if(!((lineData.state >> 4) & 1) && !((lineData.state >> 12) & 1)){
-            forwardCounter = 0;
-            backwardCounter++;
-            int speed = -25 - backwardCounter / 30;
-            if (speed < -35) speed = -35;
-            mainCommand.vy = speed;
-        }
-
-        if(!((lineData.state >> 5) & 1) && !((lineData.state >> 11) & 1)){
-            forwardCounter = 0;
-            backwardCounter++;
-            int speed = -20 - backwardCounter / 30;
-            if (speed < -30) speed = -30;
-            mainCommand.vy = speed;
-        } 
-        if(!((lineData.state >> 6) & 1) && !((lineData.state >> 10) & 1)){
-            forwardCounter = 0;
-            backwardCounter++;
-            int speed = -15 - backwardCounter / 30;
-            if (speed < -25) speed = -25;
-            mainCommand.vy = speed;
-        }
-        if(!((lineData.state >> 7) & 1 )&& !((lineData.state >> 9) & 1)){
-            forwardCounter = 0;
-            backwardCounter++;
-            int speed = -10 - backwardCounter / 30;
-            if (speed < -20) speed = -20;
-            mainCommand.vy = speed;
-        }
-
-        if(!((lineData.state >> 8) & 1 )){
-            mainCommand.vy = 0;
-        }
-        int s = lineData.state;
-
-        bool rightLine =
-            !((s >> 0) & 1)  ||
-            !((s >> 1) & 1)  ||
-            !((s >> 2) & 1)  ||
-            !((s >> 3) & 1)  ||
-            !((s >> 31) & 1) ||
-            !((s >> 30) & 1) ||
-            !((s >> 29) & 1) ||
-            !((s >> 28) & 1) ||
-            !((s >> 27) & 1) ||
-            !((s >> 26) & 1);
-
-        bool leftLine =
-            !((s >> 16) & 1) ||
-            !((s >> 13) & 1) ||
-            !((s >> 14) & 1) ||
-            !((s >> 15) & 1) ||
-            !((s >> 17) & 1) ||
-            !((s >> 18) & 1) ||
-            !((s >> 19) & 1) ||
-            !((s >> 20) & 1) ||
-            !((s >> 21) & 1) ||
-            !((s >> 22) & 1);
-
-
-        // ===== 右邊界 =====
-        if (rightLine) {
-            if (mainCommand.vx > 0) {
-                mainCommand.vx = 0;     // 禁止再往右
-            }
-            else if (mainCommand.vx == 0) {
-                mainCommand.vx = -8;    // 自己往左退
-            }
-        }
-
-
-        // ===== 左邊界 =====
-        if (leftLine) {
-            if (mainCommand.vx < 0) {
-                mainCommand.vx = 0;     // 禁止再往左
-            }
-            else if (mainCommand.vx == 0) {
-                mainCommand.vx = 8;     // 自己往右退
-            }
+        else{
+          FC_Vector_Motion(lineVx, lineVy, 90);
         }
         
-        Serial.printf("vx:%f, vy:%f, rot_v:%f\n", mainCommand.vx, mainCommand.vy, mainCommand.rot_v);
-        if(moveBackInBounds()){
-        //  Vector_Motion(lineVx, lineVy, 0);
-          continue;
+      }
+      else{
+        static unsigned long f_front_line_timer = 0;
+        static unsigned long f_back_line_timer = 0;
+        //Vy logic
+        float ball_vx = 0;
+        float ball_vy = 0;
+        bool f_back_touch = !((lineData.state >> 8) & 1); // Example: using the first line sensor as f_back touch
+        static bool f_back_touch_state = false;
+        bool front_touch = analogRead(Front_LS) < avg_ls[32];
+        static bool f_front_touch_state = false;
+        bool mid_touch = analogRead(Mid_LS) < avg_ls[33];
+        bool ball_left = ballData.valid && (ballData.angle > 105 && ballData.angle < 270);
+        bool ball_right = ballData.valid && (ballData.angle < 85 || ballData.angle > 270);
+        if (ball_left) {
+            // 180° = fully left (MAX_V), 90°/270° = barely left (0)
+            ball_vx = -MAX_V * (1.0f - abs(180 - ballData.angle) / 90.0f);
         }
-        Vector_Motion(mainCommand.vx, mainCommand.vy, mainCommand.rot_v);
+        else if (ball_right) {
+            // 0°/360° = fully right (MAX_V), 85°/275° = barely right (0)
+            int angle = ballData.angle;
+            float dist = (angle <= 85) ? angle : (360 - angle); // distance from 0°/360°
+            ball_vx = MAX_V * (1.0f - dist / 90.0f);
+        }
+        else if(!ball_left && !ball_right){
+          ball_vx = 0;
+        }
+        if(front_touch && !f_front_touch_state){
+          f_front_touch_state = true;
+          f_front_line_timer = millis();
+        }
+
+        if(f_back_touch && !f_back_touch_state){
+          f_back_touch_state = true;
+          f_back_line_timer = millis();
+        }
+
+        //Reset Vy timer
+        if(mid_touch){
+          f_back_line_timer = 0;
+          f_front_line_timer = 0;
+          f_back_touch_state = false;
+          f_front_touch_state = false; 
+        }
+        Serial.println(f_front_line_timer, f_back_line_timer);
+        if(f_front_line_timer && f_back_line_timer == 0){
+          ball_vy = (5 + (millis() - f_front_line_timer) * 0.1);
+          if(ball_vy > MAX_V) ball_vy = MAX_V;
+        }
+        else if(f_front_line_timer == 0 && f_back_line_timer){
+          ball_vy = -(5 + (millis() - f_back_line_timer) * 0.1);
+          if(ball_vy < -MAX_V) ball_vy = -MAX_V;
+        }
+        if (RobotPos.y<-100){
+          ball_vy = 15;
+        }
+        FC_Vector_Motion(ball_vx, ball_vy, 90);
+      }
+
+
+      /*
+      //Ball Tracking
+      
+
+      //Vy logic
+      if(front_touch && !f_front_touch_state){
+        f_front_touch_state = true;
+        f_front_line_timer = millis();
+      }
+
+      if(f_back_touch && !f_back_touch_state){
+        f_back_touch_state = true;
+        f_back_line_timer = millis();
+      }
+      if(vertical_line && f_back_touch_state){
+        f_back_touch_state = false;
+        f_back_line_timer = 0;
+        f_front_touch_state = true;
+        f_front_line_timer = millis();
+      }
+      //Reset Vy timer
+      if(mid_touch){
+        f_back_line_timer = 0;
+        f_front_line_timer = 0;
+        f_back_touch_state = false;
+        f_front_touch_state = false; 
+      }
+
+      //Assign Velocity
+      float line_vx = 0; = ball_vx;
+      }
+      
+      // Y axis
+      
+      */
+
+      //Serial.printf("Front LS: %d, Mid LS: %d, Back LS: %d\n",  int(front_touch), int(mid_touch), int(f_back_touch));
+      //Serial.printf("vx: %f, vy: %f\n", vx, vy);
+      
     }
-    */
 }
 
 void t_mode_main_function() {
@@ -317,7 +225,6 @@ void t_mode_main_function() {
         FC_Vector_Motion(mainCommand.vx, mainCommand.vy, mainCommand.heading); 
     }
 }
-
 
 void setup(){
   sub_core_init();
@@ -335,11 +242,10 @@ void setup(){
 }
 
 void loop(){
-  
   while(1){
     update_gyro_sensor();
     update_line_sensor();
-    //Serial.printf("Gyro Heading: %f\n", gyroData.heading);
+    Serial.printf("Gyro Heading: %f\n", gyroData.heading);
     for(uint8_t i = 0; i < 32; i++){
       Serial.printf("%d", (lineData.state >> i) & 1);
     }

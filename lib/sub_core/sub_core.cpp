@@ -5,29 +5,12 @@ LineData lineData;
 GyroData gyroData;       
 RobotStatus robot;
 MainCoreCommand mainCommand;
-uint16_t avg_ls[34];
+
 // --- Sensor Data ---
 BallData ballData;
 Position RobotPos;
 
-float init_lineDegree = -1;
-float diff = 0;
-bool emergency = false;
-bool start = false;
-bool overhalf = false;
-bool first_detect = false;
-uint32_t speed_timer = 0;
-float lineVx = 0;
-float lineVy = 0;
-
-float linesensorDegreelist[32] = {
-    0.00, 11.25, 22.50, 33.75, 45.00, 56.25, 67.50, 78.75, 
-    90.00, 101.25, 112.50, 123.75, 135.00, 146.25, 157.50, 168.75, 
-    180.00, 191.25, 202.50, 213.75, 225.00, 236.25, 247.50, 258.75, 
-    270.00, 281.25, 292.50, 303.75, 315.00, 326.25, 337.50, 348.75
-};
-
-
+uint16_t avg_ls[34];
 
 void sub_core_init() {
     Serial8.begin(921600); // For communication with MainCore
@@ -39,8 +22,13 @@ void sub_core_init() {
     pinMode(s1, OUTPUT);
     pinMode(s2, OUTPUT);
     pinMode(s3, OUTPUT);
-    pinMode(M1, INPUT_PULLDOWN);
-    pinMode(M2, INPUT_PULLDOWN);
+    //pinMode(M1, INPUT_PULLDOWN);
+    //pinMode(M2, INPUT_PULLDOWN);
+
+    pinMode(M1, INPUT);
+    pinMode(M2, INPUT);
+
+    
 
     // Motor Initialization
     // Motor 1
@@ -99,6 +87,28 @@ void update_line_sensor(){
       //Serial.println();
     }
   }
+}
+
+void fast_linesensor_update(){
+  static uint32_t prevRaw = 0xFFFFFFFF;
+  uint32_t rawState       = 0xFFFFFFFF;
+
+  for(uint8_t ch = 0; ch < 16; ch++){
+    digitalWriteFast(s0, (ch >> 0) & 1);
+    digitalWriteFast(s1, (ch >> 1) & 1);
+    digitalWriteFast(s2, (ch >> 2) & 1);
+    digitalWriteFast(s3, (ch >> 3) & 1);
+    delayMicroseconds(1);
+
+    uint16_t r1 = analogRead(M1);
+    uint16_t r2 = analogRead(M2);
+
+    if(r1 < avg_ls[ch])    rawState &= ~(1UL << ch);
+    if(r2 < avg_ls[ch+16]) rawState &= ~(1UL << (ch + 16));
+  }
+
+  lineData.state = prevRaw | rawState;
+  prevRaw        = rawState;
 }
 
 void update_gyro_sensor(){
@@ -185,75 +195,6 @@ void RobotIKControl(float vx, float vy, float omega) {
     SetMotorSpeed(2, p2);
     SetMotorSpeed(3, p3);
     SetMotorSpeed(4, p4);
-}
-
-bool moveBackInBounds(){
-  //-----LINE SENSOR-----
-  float sumX = 0.0f, sumY = 0.0f;
-  int count = 0;
-  bool linedetected = false;
-  for(int i = 0; i < LS_count; i++){
-    if(bitRead(lineData.state, i) == 0){
-      if(i==8 || i==7 || i==9){continue;}
-      
-      //Serial.printf("read%d", i);
-      
-      float deg = linesensorDegreelist[i];
-      sumX += cos(deg * DtoR_const);
-      sumY += sin(deg * DtoR_const);
-      count++;
-      linedetected = true;
-    }
-  }
-
-  // B : 反彈
-
-  if(linedetected && count > 1){
-    float lineDegree = atan2(sumY, sumX) * RtoD_const;
-    if (lineDegree < 0){lineDegree += 360;} 
-    
-    //Serial.print("degree=");Serial.println(lineDegree);
-
-    if (!first_detect){
-      init_lineDegree = lineDegree;
-      first_detect = true;
-      speed_timer = millis();
-      
-      Serial.println("LINE DETECTED !!!");
-      Serial.print("initlineDegree =");Serial.println(init_lineDegree);
-    }
-
-    diff = fabs(lineDegree - init_lineDegree);
-    if(diff > 180){diff = 360 - diff;}
-    
-    //Serial.print("diff =");Serial.println(diff);
-
-
-    //-----BACK TO FIELD-----
-    float finalDegree;
-    if(diff > EMERGENCY_THRESHOLD){
-      overhalf = true;
-      finalDegree = fmod(init_lineDegree + 180.0f, 360.0f);
-    }
-    else{
-      overhalf = false;
-      finalDegree = fmod(lineDegree + 180.0f, 360.0f);
-    }
-    Serial.print("finalDegree =");Serial.println(finalDegree);
-        
-    lineVx = 40.0f *cos(finalDegree * DtoR_const);
-    lineVy = 40.0f *sin(finalDegree * DtoR_const);   
-  }
-  else{
-    first_detect = false;
-    lineVx = 0;
-    lineVy = 0;
-  }
-
-  Serial.print("lineVx =");Serial.println(lineVx);
-  Serial.print("lineVy =");Serial.println(lineVy);
-  
-
 }
 
 void Vector_Motion(float Vx, float Vy, float rot_V) {  
@@ -354,6 +295,8 @@ void readMotorandSendSensors() {
         }
     }
 }
+// Raw Command BB 0A 0A 00 02 EE Test
+
 
 void read_cam_and_pos_data() {
 
@@ -398,3 +341,4 @@ void read_cam_and_pos_data() {
         }
     }
 }
+

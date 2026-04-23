@@ -6,9 +6,6 @@
 #include <math.h>
 #include <Dual_Core_Config.h>
 
-#define EMERGENCY_THRESHOLD 90
-#define DtoR_const 0.0174529f
-#define RtoD_const 57.2958f
 // --- Multiplexer Pins ---
 #define s0 A2
 #define s1 A3
@@ -34,13 +31,14 @@
 
 // Motor 1 Pins
 #define pwmPin4 23  // PWM 控制腳
-#define DIRA_4 37   // 方向控制腳1
-#define DIRB_4 36  // 方向控制腳2
+#define DIRA_4 37    // 方向控制腳1
+#define DIRB_4 36 
 
 #define LS_count 32
 #define Front_LS A7
 #define Mid_LS A6
-#define Back_LS readMux(8, 1) 
+
+
 
 // --- Data Structures ---
 
@@ -75,6 +73,7 @@ struct Position {
 };
 
 
+
 // Robot global configuration and tuning parameters
 struct RobotStatus {
     float robot_heading = 90.0f;      // Target heading
@@ -97,13 +96,14 @@ extern uint16_t avg_ls[34];
 extern BallData ballData;
 extern Position RobotPos;
 
+
 // --- Core Function Prototypes ---
 void sub_core_init();
 int  readMux(int ch, int sig);
 void update_line_sensor();
 void update_gyro_sensor();
 void line_calibrate();
-bool moveBackInBounds();
+
 // --- Actuators & IK Prototypes ---
 void SetMotorSpeed(uint8_t port, float speed);
 void RobotIKControl(float vx, float vy, float omega);
