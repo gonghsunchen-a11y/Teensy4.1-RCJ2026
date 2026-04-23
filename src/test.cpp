@@ -186,6 +186,6 @@ void setup(){
 
 void loop(){
 update_gyro_sensor();
-Vector_Motion(0, 40, 0);
+Vector_Motion(-30, 0, 0);
 }
 

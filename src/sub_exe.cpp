@@ -36,8 +36,7 @@ bool moveBackInBounds(){
     if(i==5 ||i==6 ||i==7 ||i==8 ||i==9 ||i==10 ||i==11){continue;}
       
     if(bitRead(lineData.state, i) == 0){
-      
-      //Serial.printf("read%d", i);
+      Serial.printf("read%d", i);
       
       float deg = linesensorDegreelist[i];
       sumX += cos(deg * DtoR_const);
@@ -81,8 +80,29 @@ bool moveBackInBounds(){
       finalDegree = fmod(lineDegree + 180.0f, 360.0f);
     }
     Serial.print("finalDegree =");Serial.println(finalDegree);
-    lineVx = 40.0 *cos(finalDegree * DtoR_const);
-    lineVy = 40.0 *sin(finalDegree * DtoR_const);   
+    lineVx = 30.0 *cos(finalDegree * DtoR_const);
+    lineVy = 30.0 *sin(finalDegree * DtoR_const);
+/*
+    //Reset Vy timer
+    if(mid_touch){
+    f_back_line_timer = 0;
+    f_front_line_timer = 0;
+    //          f_back_touch_state = false;
+    f_front_touch_state = false; 
+    }
+    Serial.println(f_front_line_timer, f_back_line_timer);
+    if(f_front_line_timer && f_back_line_timer == 0){
+    ball_vy = (5 + (millis() - f_front_line_timer) * 0.1);
+    if(ball_vy > MAX_V) ball_vy = MAX_V;
+    }
+    else if(f_front_line_timer == 0 && f_back_line_timer){
+    ball_vy = -(5 + (millis() - f_back_line_timer) * 0.1);
+    if(ball_vy < -MAX_V) ball_vy = -MAX_V;
+    }
+    if (RobotPos.y<-100){
+    ball_vy = 15;
+    }
+  */
     return true;
   }
   else{
@@ -106,12 +126,12 @@ void c_mode_main_function() {
       //use Ultrasonic Sensor for localization
       if(moveBackInBounds()){
         Serial.printf("MOVING BACK IN BOUNDS %f %f", lineVx, lineVy);
-        if (RobotPos.y<-100){
-          FC_Vector_Motion(lineVx, lineVy + 20, 90);
-        }
-        else{
+        //if (RobotPos.y<-100){
+          //FC_Vector_Motion(lineVx, lineVy + 20, 90);
+        //}
+        //else{
           FC_Vector_Motion(lineVx, lineVy, 90);
-        }
+        //}
         
       }
       else{
@@ -120,11 +140,24 @@ void c_mode_main_function() {
         //Vy logic
         float ball_vx = 0;
         float ball_vy = 0;
-        bool f_back_touch = !((lineData.state >> 8) & 1); // Example: using the first line sensor as f_back touch
-        static bool f_back_touch_state = false;
-        bool front_touch = analogRead(Front_LS) < avg_ls[32];
+        //bool f_back_touch = !((lineData.state >> 8) & 1); // Example: using the first line sensor as f_back touch
+        //static bool f_back_touch_state = false;
+        bool front_touch = analogRead(A6) < avg_ls[32] || analogRead(A7) < avg_ls[33];
         static bool f_front_touch_state = false;
-        bool mid_touch = analogRead(Mid_LS) < avg_ls[33];
+        bool mid_touch = false;
+        int checkBits[7] = {5, 6, 7, 8, 9, 10, 11};
+
+        for (int i = 0; i < 7; i++) {
+            if (!((lineData.state >> checkBits[i]) & 1)) {
+              mid_touch = true;
+              break;
+            }
+        }
+        //!((lineData.state >> checkBits[i]) & 1)
+        
+        //!(lineData.state >> checkBits[i]) & 1
+        
+        Serial.printf("midt %d\n", A6 || A7);
         bool ball_left = ballData.valid && (ballData.angle > 105 && ballData.angle < 270);
         bool ball_right = ballData.valid && (ballData.angle < 85 || ballData.angle > 270);
         if (ball_left) {
@@ -145,30 +178,33 @@ void c_mode_main_function() {
           f_front_line_timer = millis();
         }
 
-        if(f_back_touch && !f_back_touch_state){
-          f_back_touch_state = true;
-          f_back_line_timer = millis();
-        }
+//        if(f_back_touch && !f_back_touch_state){
+//          f_back_touch_state = true;
+//          f_back_line_timer = millis();
+//        }
 
         //Reset Vy timer
         if(mid_touch){
           f_back_line_timer = 0;
           f_front_line_timer = 0;
-          f_back_touch_state = false;
+//          f_back_touch_state = false;
           f_front_touch_state = false; 
+
         }
         Serial.println(f_front_line_timer, f_back_line_timer);
         if(f_front_line_timer && f_back_line_timer == 0){
           ball_vy = (5 + (millis() - f_front_line_timer) * 0.1);
-          if(ball_vy > MAX_V) ball_vy = MAX_V;
+          if(ball_vy > 30) ball_vy = 30;
         }
         else if(f_front_line_timer == 0 && f_back_line_timer){
           ball_vy = -(5 + (millis() - f_back_line_timer) * 0.1);
-          if(ball_vy < -MAX_V) ball_vy = -MAX_V;
+          if(ball_vy < -30) ball_vy = -30;
         }
+        /*
         if (RobotPos.y<-100){
           ball_vy = 15;
-        }
+        }*/
+        Serial.printf("Vx%f,Vy%f\n", ball_vx, ball_vy);
         FC_Vector_Motion(ball_vx, ball_vy, 90);
       }
 
@@ -281,10 +317,6 @@ void loop(){
             uint16_t reading = analogRead(Front_LS);
             if(reading > front_max) front_max = reading;
             if(reading < front_min) front_min = reading;
-            reading = analogRead(Mid_LS);
-            if(reading > mid_max) mid_max = reading;
-            if(reading < mid_min) mid_min = reading;
-
           }
 
           for (int i = 0; i < LS_count; i++) avg_ls[i] = (max_ls[i] + min_ls[i]) / 2;
@@ -292,7 +324,6 @@ void loop(){
             Serial.printf("Sensor %d: min=%d, max=%d, avg=%d\n", i, min_ls[i], max_ls[i], avg_ls[i]);
           }
           avg_ls[32] = (front_max + front_min) / 2;
-          avg_ls[33] = (mid_max + mid_min) / 2;
           EEPROM.put(0, avg_ls);
           delay(1000); // Ensure EEPROM write completes
           Serial8.write(LS_CAL_ACK); // Send end calibration acknowledgment

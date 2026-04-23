@@ -35,8 +35,8 @@
 #define DIRB_4 36 
 
 #define LS_count 32
-#define Front_LS A7
-#define Mid_LS A6
+#define Front_LS A7 || A6
+//#define Mid_LS A6
 
 
 
