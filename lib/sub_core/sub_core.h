@@ -35,9 +35,13 @@
 #define DIRB_4 36 
 
 #define LS_count 32
-#define Front_LS A7 || A6
+#define Front_LS A7
 //#define Mid_LS A6
 
+#define LS_MASK_FRONT  0x00000FE0UL
+#define LS_MASK_RIGHT  0x001FF000UL
+#define LS_MASK_BACK   0x0FE00000UL
+#define LS_MASK_LEFT   0xF000001FUL
 
 
 // --- Data Structures ---

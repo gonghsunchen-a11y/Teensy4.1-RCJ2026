@@ -19,6 +19,8 @@ float linesensorDegreelist[32] = {
 //Line Sensor
 #define EMERGENCY_THRESHOLD 90
 
+
+int prev_final_degree = -1;
 bool moveBackInBounds(){
   //-----LINE SENSOR-----
   float sumX = 0.0f, sumY = 0.0f;
@@ -31,12 +33,17 @@ bool moveBackInBounds(){
   static bool overhalf = false;
   static bool first_detect = false;
   static uint32_t speed_timer = 0;
-
+  bool online = false;
   for(int i = 0; i < LS_count; i++){
-    if(i==5 ||i==6 ||i==7 ||i==8 ||i==9 ||i==10 ||i==11){continue;}
+    if(i==7 ||i==8 ||i==9){
+      if(bitRead(lineData.state, i) == 0){
+        online = true;
+      }
+      continue;
+    }
+    
       
     if(bitRead(lineData.state, i) == 0){
-      Serial.printf("read%d", i);
       
       float deg = linesensorDegreelist[i];
       sumX += cos(deg * DtoR_const);
@@ -79,9 +86,46 @@ bool moveBackInBounds(){
       overhalf = false;
       finalDegree = fmod(lineDegree + 180.0f, 360.0f);
     }
+    prev_final_degree = finalDegree;
     Serial.print("finalDegree =");Serial.println(finalDegree);
-    lineVx = 30.0 *cos(finalDegree * DtoR_const);
-    lineVy = 30.0 *sin(finalDegree * DtoR_const);
+    /*
+    if(finalDegree < 45 || finalDegree >= 315){
+        finalDegree = 0;
+    }
+    */
+    if(finalDegree < 135 && finalDegree >= 45){
+        finalDegree = 90;
+    }
+    else if(finalDegree < 225 && finalDegree >= 135){
+        finalDegree = 180;
+    }
+    /*
+    else if(finalDegree >= 225 && finalDegree < 315){
+      finalDegree = 270;
+    }*/
+    float speed = 40;
+
+    lineVx = speed *cos(finalDegree * DtoR_const);
+    lineVy = speed * 0.5 *sin(finalDegree * DtoR_const);
+    bool left = (lineData.state & LS_MASK_LEFT) != LS_MASK_LEFT;
+    bool right = (lineData.state & LS_MASK_RIGHT) != LS_MASK_RIGHT;
+    bool front = (lineData.state & LS_MASK_FRONT) != LS_MASK_FRONT;
+    bool front_in = analogRead(A6) < avg_ls[32];
+    if(right && !left){
+      if(!front_in){
+        lineVy = 20;
+      }
+    }
+    if(!right && left){
+      if(!front_in){
+        lineVy = 20;
+      }
+    }
+    //if(left && right){
+      //lineVy = -20;
+    //}
+    
+
 /*
     //Reset Vy timer
     if(mid_touch){
@@ -106,9 +150,11 @@ bool moveBackInBounds(){
     return true;
   }
   else{
+    prev_final_degree = -1;
     first_detect = false;
     lineVx = 0;
     lineVy = 0;
+    speed_timer = 0;
     return false;
   }
 }
@@ -142,12 +188,12 @@ void c_mode_main_function() {
         float ball_vy = 0;
         //bool f_back_touch = !((lineData.state >> 8) & 1); // Example: using the first line sensor as f_back touch
         //static bool f_back_touch_state = false;
-        bool front_touch = analogRead(A6) < avg_ls[32] || analogRead(A7) < avg_ls[33];
+        bool front_touch = /*analogRead(A6) < avg_ls[32] || */analogRead(A7) < avg_ls[33];
         static bool f_front_touch_state = false;
         bool mid_touch = false;
-        int checkBits[7] = {5, 6, 7, 8, 9, 10, 11};
+        int checkBits[3] = {7, 8, 9};
 
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < 3; i++) {
             if (!((lineData.state >> checkBits[i]) & 1)) {
               mid_touch = true;
               break;
@@ -189,21 +235,29 @@ void c_mode_main_function() {
           f_front_line_timer = 0;
 //          f_back_touch_state = false;
           f_front_touch_state = false; 
-
         }
         Serial.println(f_front_line_timer, f_back_line_timer);
-        if(f_front_line_timer && f_back_line_timer == 0){
+        if(f_front_line_timer != 0){
           ball_vy = (5 + (millis() - f_front_line_timer) * 0.1);
           if(ball_vy > 30) ball_vy = 30;
-        }
-        else if(f_front_line_timer == 0 && f_back_line_timer){
-          ball_vy = -(5 + (millis() - f_back_line_timer) * 0.1);
-          if(ball_vy < -30) ball_vy = -30;
         }
         /*
         if (RobotPos.y<-100){
           ball_vy = 15;
         }*/
+        bool left = (lineData.state & LS_MASK_LEFT) != LS_MASK_LEFT;
+        bool right = (lineData.state & LS_MASK_RIGHT) != LS_MASK_RIGHT;
+        if (prev_final_degree > 135 && prev_final_degree < 225) {
+            if (ball_vx > 0) ball_vx = 0;
+            if (ball_vy < 0) ball_vy = 0;
+        }
+
+        // left side
+        if (prev_final_degree  && prev_final_degree < 225) {
+            if (ball_vx < 0) ball_vx = 0;
+            if (ball_vy > 0) ball_vy = 0;
+        }
+
         Serial.printf("Vx%f,Vy%f\n", ball_vx, ball_vy);
         FC_Vector_Motion(ball_vx, ball_vy, 90);
       }
