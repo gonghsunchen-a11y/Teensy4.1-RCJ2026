@@ -1,5 +1,4 @@
 #include "main_core.h"
-#define MAX_VX 30
 
 // 1. FUNCTION PROTOTYPES (Tells the compiler these exist later)
 void c_mode_main_function();
@@ -10,28 +9,21 @@ void t_mode_main_function();
 void t_mode_main_function() {
     Serial.println("Tmode Started");
     move_to_position(0, 100); // Move to (100, 100)
-    
-    
     //Missioin Complete, stop the robot
     while(1) {
         sendMotor(0, 0, 0, subCoreData.gyroHeading); // Stop the robot
     }
 }
 
-
 void c_mode_main_function() {
     Serial.println("Cmode Started");
     while(1) {  
         update_all_sensor(); // Keep updating sensors!
         localizeRobot();
-        if(Serial8.available()) {
-            if(Serial8.read() == GET_MAIN_DATA) {
-                send_cam_and_pos_data();
-            }
-        }
+        Serial.printf("GX %d %d\n ", camData.goal_x, usData.dist_b);
+        sendPacket();
     }
 }
-
 
 void setup() {
     main_core_init();

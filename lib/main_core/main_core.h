@@ -23,7 +23,7 @@
 #define left_us A14
 #define back_us A16
 #define right_us A17
-#define alpha 0.75  
+#define alpha 0.15
 
 // --- Goal Localization Thresholds ---
 #define Y_LOCALIZE_THRESHOLD_L 20
@@ -67,11 +67,6 @@ struct SubCoreData {
     int16_t gyroHeading = 0; // 0-359 degrees
 };
 
-struct Position {
-    int x; // -90 to 90, where 0 is near the center line and 90 is near the goal line
-    int y; // -120 to 120
-};
-
 
 
 // --- 3. External Variables ---
@@ -82,7 +77,7 @@ extern USSensor usData;
 extern SubCoreData subCoreData;
 extern RobotMovement robotMovement;
 extern Adafruit_SSD1306 display;
-extern Position RobotPos;
+
 
 // --- Function Prototypes ---
 void main_core_init();
@@ -97,7 +92,9 @@ void readGyroAndLineFromSubCore();
 void sendMotor(float vx, float vy, float rot_v, int heading);
 void sendMotorAndGetSensors(float vx, float vy, float rot_v, int heading);
 void localizeRobot();
-void update_all_sensor();
-void send_cam_and_pos_data();
 bool move_to_position(int pos_x, int pos_y);
+void send_cam_and_pos_data();
+void update_all_sensor();
+void defense_localizeRobot();
+void sendPacket();
 #endif

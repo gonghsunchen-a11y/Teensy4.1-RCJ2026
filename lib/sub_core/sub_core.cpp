@@ -5,6 +5,8 @@ LineData lineData;
 GyroData gyroData;       
 RobotStatus robot;
 MainCoreCommand mainCommand;
+GoalData goalData;
+USSensor usData;
 
 // --- Sensor Data ---
 BallData ballData;
@@ -27,8 +29,6 @@ void sub_core_init() {
 
     pinMode(M1, INPUT);
     pinMode(M2, INPUT);
-
-    
 
     // Motor Initialization
     // Motor 1
@@ -89,7 +89,7 @@ void update_line_sensor(){
   }
 }
 
-void fast_linesensor_update(){
+void fast_update_line_sensor(){
   static uint32_t prevRaw = 0xFFFFFFFF;
   uint32_t rawState       = 0xFFFFFFFF;
 
@@ -98,7 +98,8 @@ void fast_linesensor_update(){
     digitalWriteFast(s1, (ch >> 1) & 1);
     digitalWriteFast(s2, (ch >> 2) & 1);
     digitalWriteFast(s3, (ch >> 3) & 1);
-    delayMicroseconds(1);
+    /*might be allowed to removed*/
+    delayMicroseconds(10);
 
     uint16_t r1 = analogRead(M1);
     uint16_t r2 = analogRead(M2);
@@ -160,8 +161,6 @@ void update_gyro_sensor(){
   }
 }
 
-
-
 /* --- Actuators Part --- */
 
 void SetMotorSpeed(uint8_t port, float speed) {
@@ -193,8 +192,8 @@ void RobotIKControl(float vx, float vy, float omega) {
 
     SetMotorSpeed(1, p1);
     SetMotorSpeed(2, p2);
-    SetMotorSpeed(3, p3*0.7);
-    SetMotorSpeed(4, p4);
+    SetMotorSpeed(3, p3);
+    SetMotorSpeed(4, p4*0.7);
 }
 
 void Vector_Motion(float Vx, float Vy, float rot_V) {  
@@ -295,50 +294,30 @@ void readMotorandSendSensors() {
         }
     }
 }
-// Raw Command BB 0A 0A 00 02 EE Test
 
+void readMainPacket() {
+    static uint8_t buffer[20];
+    static int index = 0;
 
-void read_cam_and_pos_data() {
+    while (Serial8.available() > 0) {
+        uint8_t b = Serial8.read();
+        buffer[index++] = b;
+        if (index == 20) {
+            index = 0;
+            if (buffer[19] != 0xEE) continue;
+            uint8_t sum = 0;
+            for (int i = 2; i <= 17; i++) sum += buffer[i];
+            if (sum != buffer[18]) continue;
 
-    Serial8.write(GET_MAIN_DATA);
-
-    while (1) {
-
-        static uint32_t lastReq = 0;
-        if (millis() - lastReq > 10) {
-            Serial8.write(GET_MAIN_DATA);
-            lastReq = millis();
-        }
-
-        if (Serial8.available() < 10) continue;
-
-        while (Serial8.available() && Serial8.peek() != PROTOCAL_HEADER) {
-            Serial8.read();
-        }
-
-        if (Serial8.available() < 10) continue;
-
-        uint8_t buf[10];
-        Serial8.readBytes(buf, 10);
-
-        if (buf[0] != PROTOCAL_HEADER) continue;
-
-        uint8_t checksum = 0;
-        for (int i = 0; i < 8; i++) {
-            checksum += buf[i];
-        }
-
-        if (buf[9] == PROTOCAL_END && (checksum % 256) == buf[8]) {
-
-            ballData.valid = buf[1];
-            ballData.angle = ((uint16_t)buf[3] << 8) | buf[2];
-            ballData.dist  = ((uint16_t)buf[5] << 8) | buf[4];
-
-            RobotPos.x = (int8_t)buf[6];
-            RobotPos.y = (int8_t)buf[7];
-
-            break;
+            ballData.angle = (int16_t)((buffer[3] << 8) | buffer[2]);
+            ballData.dist  = (int16_t)((buffer[5] << 8) | buffer[4]);
+            ballData.valid = buffer[6] == 0xFF;
+            goalData.x     = (int16_t)((buffer[8] << 8) | buffer[7]);
+            goalData.valid = buffer[9] == 0xFF;
+            // usData.dist_ｆ       = (int16_t)((buffer[11] << 8) | buffer[10]);
+            // usData.dist_ｌ       = (int16_t)((buffer[15] << 8) | buffer[14])
+            // usData.dist_ｒ       = (int16_t)((buffer[16] << 8) | buffer[17]);
+            usData.dist_b     = (int16_t)((buffer[13] << 8) | buffer[12]);
         }
     }
 }
-

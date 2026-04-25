@@ -31,18 +31,17 @@
 
 // Motor 1 Pins
 #define pwmPin4 23  // PWM 控制腳
-#define DIRA_4 36    // 方向控制腳1
-#define DIRB_4 37 
+#define DIRA_4 37    // 方向控制腳1
+#define DIRB_4 36 
 
 #define LS_count 32
 #define Front_LS A7
-//#define Mid_LS A6
+#define Mid_LS A6
 
 #define LS_MASK_FRONT  0x00000FE0UL
 #define LS_MASK_RIGHT  0x001FF000UL
 #define LS_MASK_BACK   0x0FE00000UL
 #define LS_MASK_LEFT   0xF000001FUL
-
 
 // --- Data Structures ---
 
@@ -76,6 +75,17 @@ struct Position {
     int y; // -120 to 120
 };
 
+struct GoalData {
+    uint16_t x = 65535; uint16_t y = 65535;
+    uint16_t w = 65535; uint16_t h = 65535;
+    bool valid = false;
+};
+
+struct USSensor {
+    uint16_t dist_b = 0; uint16_t dist_l = 0;
+    uint16_t dist_r = 0; uint16_t dist_f = 0;
+};
+
 
 
 // Robot global configuration and tuning parameters
@@ -84,7 +94,7 @@ struct RobotStatus {
     //float P_factor = 0.7;         // Pololu Motor
     float P_factor = 0.85f;           // Proportional gain for rotation
 
-    float heading_threshold = 10.0f;  // Deadband (degrees)
+    float heading_threshold = 5.0f;  // Deadband (degrees)
     int8_t def_pos = 0;               // Default position state
     bool picked_up = false;           // Lift detection flag
 };
@@ -99,12 +109,15 @@ extern RobotStatus robot;        // Added to match Vector_Motion usage
 extern uint16_t avg_ls[34];
 extern BallData ballData;
 extern Position RobotPos;
+extern GoalData goalData;
+extern USSensor usData;
 
 
 // --- Core Function Prototypes ---
 void sub_core_init();
 int  readMux(int ch, int sig);
 void update_line_sensor();
+void fast_update_line_sensor();
 void update_gyro_sensor();
 void line_calibrate();
 
@@ -116,4 +129,5 @@ void FC_Vector_Motion(float WVx, float WVy, float target_heading);
 void readMotor();
 void readMotorandSendSensors();
 void read_cam_and_pos_data();
+void readMainPacket();;
 #endif
