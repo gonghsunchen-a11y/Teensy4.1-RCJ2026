@@ -93,7 +93,7 @@ inline bool moveUntilTouch(float vx, float vy, uint32_t mask,
     uint32_t start = millis();
     while (1) {
         update_gyro_sensor();
-        fast_update_line_sensor();
+        update_line_sensor();
         FC_Vector_Motion(vx, vy, heading);
         if (isLineTouched(mask))                          { stopRobot(); return true;  }
         if (timeout_ms && millis() - start > timeout_ms)  { stopRobot(); return false; }

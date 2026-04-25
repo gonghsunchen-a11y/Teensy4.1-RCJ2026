@@ -247,17 +247,7 @@ void c_mode_main_function() {
         }*/
         bool left = (lineData.state & LS_MASK_LEFT) != LS_MASK_LEFT;
         bool right = (lineData.state & LS_MASK_RIGHT) != LS_MASK_RIGHT;
-        if (prev_final_degree > 135 && prev_final_degree < 225) {
-            if (ball_vx > 0) ball_vx = 0;
-            if (ball_vy < 0) ball_vy = 0;
-        }
-
-        // left side
-        if (prev_final_degree  && prev_final_degree < 225) {
-            if (ball_vx < 0) ball_vx = 0;
-            if (ball_vy > 0) ball_vy = 0;
-        }
-
+        
         Serial.printf("Vx%f,Vy%f\n", ball_vx, ball_vy);
         FC_Vector_Motion(ball_vx, ball_vy, 90);
       }
